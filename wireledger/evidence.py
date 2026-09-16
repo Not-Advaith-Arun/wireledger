@@ -5,10 +5,12 @@ import hashlib
 import ipaddress
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
+from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
 
 FORMAT = "wireledger.tls-evidence.v1"
 MAX_CERT_BYTES = 64 * 1024
@@ -124,3 +126,57 @@ def validate_evidence(observation):
         if observation.get(field) != value:
             raise ValueError(f"certificate evidence does not match signed metadata: {field}")
     return chain
+
+
+def load_trust(path):
+    with Path(path).open("rb") as stream:
+        raw = stream.read(MAX_CA_FILE + 1)
+    if len(raw) > MAX_CA_FILE:
+        raise ValueError("CA file exceeds 4 MiB")
+    certificates = x509.load_pem_x509_certificates(raw)
+    if not certificates or len(certificates) > 4096:
+        raise ValueError("CA file must contain 1..4096 certificates")
+    return certificates
+
+
+def audit(records, roots, *, at_observed_time=False, now=None):
+    """Offline X.509 checks. Embedded chain certificates are never promoted to trust."""
+    if not roots:
+        raise ValueError("audit requires independently supplied trusted CA certificates")
+    store = Store(roots)
+    trusted_set = trust_fingerprint([cert.public_bytes(serialization.Encoding.DER) for cert in roots])
+    current = now if now is not None else datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("audit time must be timezone-aware")
+    rows = []
+    for record in records:
+        observation = record["body"]["observation"]
+        row = {"sequence": record["body"]["sequence"], "host": observation.get("host"),
+               "port": observation.get("port")}
+        if observation.get("status") != "verified":
+            row.update(status="no-successful-handshake", detail="No successful TLS observation to validate.")
+        elif "evidence" not in observation:
+            row.update(status="evidence-missing", detail="Legacy fingerprint-only observation; recapture to audit certificates.")
+        else:
+            try:
+                chain = validate_evidence(observation)
+                instant = parse_time(observation["observed_at"]) if at_observed_time else current
+                row["verification_time"] = instant.isoformat()
+                host = observation["host"]
+                try:
+                    subject = x509.IPAddress(ipaddress.ip_address(host))
+                except ValueError:
+                    subject = x509.DNSName(host)
+                verifier = PolicyBuilder().store(store).time(instant).max_chain_depth(MAX_CHAIN - 2).build_server_verifier(subject)
+                parsed = [x509.load_der_x509_certificate(der) for der in chain]
+                verified = verifier.verify(parsed[0], parsed[1:])
+                row.update(status="passed", verified_chain_length=len(verified),
+                           captured_ca_set_matches_audit_set=observation["evidence"]["loaded_ca_set_sha256"] == trusted_set)
+            except (ValueError, TypeError, VerificationError, x509.UnsupportedGeneralNameType) as exc:
+                row.update(status="failed", detail=str(exc))
+        rows.append(row)
+    return {"ok": bool(rows) and all(row["status"] == "passed" for row in rows),
+            "audit_ca_set_sha256": trusted_set,
+            "time_policy": "observer-asserted-time" if at_observed_time else "current-time",
+            "results": rows,
+            "scope": "Offline certificate path, hostname, validity and metadata checks. No proof of handshake occurrence, trusted timestamp, revocation status, or absence of compromise."}

@@ -15,6 +15,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from .ledger import LedgerError, append, canonical, initialize, load_private, make_checkpoint, verify, verify_records
 from .probe import changes, observe
+from .evidence import audit, load_trust
 
 
 def certificates(directory):
@@ -107,6 +108,9 @@ def demo():
                     raise LedgerError("local TLS lab verification failed: " + str(observation))
                 append(ledger, key, observation)
         records = verify(ledger, key.public_key())
+        offline_audit = audit(records, load_trust(ca))
+        if not offline_audit["ok"]:
+            raise LedgerError("offline lab certificate audit failed: " + str(offline_audit))
         checkpoint = make_checkpoint(records, key)
         tampered = ledger.read_bytes().replace(b"loopback-lab", b"tampered-lab", 1)
         detected = {}
@@ -121,4 +125,5 @@ def demo():
                 detected[label] = True
         return {"network": "loopback only", "observations": len(records), "events": changes(records),
                 "detected": detected, "temporary_keys_removed": True,
+                "offline_certificate_audit": offline_audit,
                 "note": "Certificate changes alone do not establish an attack."}

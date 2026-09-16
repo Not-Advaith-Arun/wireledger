@@ -7,6 +7,7 @@ from .ledger import (LedgerError, append, canonical, exclusive_write, initialize
                      load_private, load_public, make_checkpoint, parse, public_id,
                      record_hash, verify, ZERO)
 from .probe import changes, compare, observe
+from .evidence import audit, load_trust
 
 
 def main(argv=None):
@@ -27,6 +28,12 @@ def main(argv=None):
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         check.add_argument("--checkpoint", type=Path)
+    evidence = sub.add_parser("audit", help="verify signatures and independently audit captured certificates offline")
+    evidence.add_argument("ledger", type=Path)
+    evidence.add_argument("--public-key", type=Path, required=True)
+    evidence.add_argument("--checkpoint", type=Path)
+    evidence.add_argument("--ca-file", type=Path, required=True, help="independently trusted PEM CA bundle, never taken from the ledger")
+    evidence.add_argument("--at-observed-time", action="store_true", help="use the signed observer-asserted time instead of current time")
     checkpoint = sub.add_parser("checkpoint", help="sign current head; keep a copy outside the witness directory")
     checkpoint.add_argument("directory", type=Path)
     checkpoint.add_argument("output", type=Path)
@@ -58,6 +65,12 @@ def main(argv=None):
         elif args.command == "demo":
             from .lab import demo
             result = demo()
+        elif args.command == "audit":
+            key = load_public(args.public_key)
+            checkpoint_data = parse(args.checkpoint.read_bytes()) if args.checkpoint else None
+            records = verify(args.ledger, key, checkpoint_data)
+            result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
+            code = 0 if result["ok"] else 2
         elif args.command == "compare":
             histories = []
             for name in ("left", "right"):

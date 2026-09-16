@@ -9,5 +9,8 @@ description = "A research CLI for signed TLS observation histories"
 requires-python = ">=3.11"
 dependencies = ["cryptography>=44,<50"]
 
+[project.scripts]
+wireledger = "wireledger.__main__:main"
+
 [tool.setuptools]
 packages = ["wireledger"]

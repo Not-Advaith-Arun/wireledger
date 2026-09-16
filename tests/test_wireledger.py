@@ -10,8 +10,10 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from wireledger.lab import certificates, demo, tls_server
 from wireledger.ledger import (LedgerError, append, canonical, initialize, load_private,
                                load_public, make_checkpoint, parse, verify, verify_records)
+from wireledger.probe import changes, compare, observe
 
 
 class LedgerTests(unittest.TestCase):
@@ -105,6 +107,9 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(worker.wait(timeout=10), 0)
         self.assertEqual(len(verify(self.path, self.key.public_key())), 5)
 
+    def test_cli_requires_pinned_key(self):
+        result = subprocess.run([sys.executable, "-m", "wireledger", "verify", str(self.path)], capture_output=True)
+        self.assertEqual(result.returncode, 2)
 
     def test_signature_base64_aliases_rejected_for_records_and_checkpoints(self):
         records = self.add(1)
@@ -139,6 +144,54 @@ class LedgerTests(unittest.TestCase):
             verify(self.path, self.key.public_key(), checkpoint)
 
 
+class NetworkTests(unittest.TestCase):
+    def test_real_loopback_rotation_and_tampering(self):
+        result = demo()
+        self.assertEqual(result["observations"], 3)
+        reasons = [reason for event in result["events"] for reason in event["changes"]]
+        self.assertIn("certificate-changed-same-key", reasons)
+        self.assertIn("public-key-changed", reasons)
+        self.assertTrue(all(result["detected"].values()))
+
+    def test_unknown_ca_and_hostname_mismatch_fail_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ca, pairs = certificates(tmp)
+            with tls_server(*pairs[0]) as port:
+                unknown = observe("localhost", port, connect_ip="127.0.0.1")
+                mismatch = observe("wrong.invalid", port, connect_ip="127.0.0.1", cafile=str(ca))
+            self.assertEqual(unknown["status"], "verification-failed")
+            self.assertEqual(mismatch["status"], "verification-failed")
+
+    def test_invalid_inputs_rejected_before_network(self):
+        for host, kwargs in (("https://example.com", {}), ("localhost", {"port": 0}),
+                             ("localhost", {"timeout": float("nan")}),
+                             ("localhost", {"connect_ip": "example.com"})):
+            with self.assertRaises(ValueError):
+                observe(host, **kwargs)
+
+    def test_vantages_are_not_conflated(self):
+        records = [{"body": {"sequence": 1, "observation": {"host": "example.com", "port": 443, "vantage": "one", "status": "connection-failed"}}},
+                   {"body": {"sequence": 2, "observation": {"host": "example.com", "port": 443, "vantage": "two", "status": "verification-failed"}}}]
+        self.assertEqual([e["changes"] for e in changes(records)], [["first-observation"], ["first-observation"]])
+
+    def test_compare_preserves_missing_failed_and_different_observations(self):
+        a = {"body": {"observation": {"host": "example.com", "port": 443, "status": "verified", "spki_sha256": "a"}}}
+        b = copy.deepcopy(a)
+        b["body"]["observation"]["spki_sha256"] = "b"
+        self.assertEqual(compare([a], [b])[0]["different_fields"], ["spki_sha256"])
+        self.assertEqual(compare([a], [])[0]["comparison"], "missing-observation")
+        b["body"]["observation"]["status"] = "verification-failed"
+        self.assertEqual(compare([a], [b])[0]["comparison"], "at-least-one-handshake-failed")
+
+    def test_cipher_and_alpn_changes_are_visible(self):
+        old = {"body": {"sequence": 1, "observation": {"host": "example.com", "port": 443,
+               "vantage": "lab", "status": "verified", "spki_sha256": "key", "certificate_sha256": "cert",
+               "cipher": "first", "alpn": "h2"}}}
+        new = copy.deepcopy(old)
+        new["body"]["sequence"] = 2
+        new["body"]["observation"].update(cipher="second", alpn="http/1.1")
+        self.assertEqual(compare([old], [new])[0]["different_fields"], ["cipher", "alpn"])
+        self.assertEqual(changes([old, new])[1]["changes"], ["cipher-changed", "alpn-changed"])
 
 
 if __name__ == "__main__":

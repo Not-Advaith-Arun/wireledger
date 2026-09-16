@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wireledger"
+version = "0.1.0"
+description = "A research CLI for signed TLS observation histories"
+requires-python = ">=3.11"
+dependencies = ["cryptography>=44,<50"]
+
+[tool.setuptools]
+packages = ["wireledger"]

@@ -229,6 +229,19 @@ class EndToEndTests(unittest.TestCase):
             append(ledger, key, {**sample, "vantage": "clock-unknown", "observed_at": "not-a-time"})
             unknown = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)
             self.assertEqual(next(r for r in unknown["results"] if r["vantage"] == "clock-unknown")["sampling_state"], "unknown-time")
+            uncertain = self.cli("continuity", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)
+            latest = next(r for r in uncertain["results"] if r["vantage"] == "clock-unknown")
+            self.assertEqual(latest["latest_sequence"], 3)
+            self.assertEqual(latest["latest_status"], "verified")
+            self.assertIsNone(latest["age_seconds"])
+            append(ledger, key, {"host":"fixture.test", "port":443, "vantage":"clock-unknown", "status":"error", "observed_at":"unavailable"})
+            saved = ledger.read_bytes()
+            uncertain = self.cli("continuity", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)
+            latest = next(r for r in uncertain["results"] if r["vantage"] == "clock-unknown")
+            self.assertEqual(latest["latest_sequence"], 4)
+            self.assertEqual(latest["latest_status"], "error")
+            self.assertEqual(latest["sampling_state"], "time-unavailable")
+            self.assertEqual(ledger.read_bytes(), saved)
 
 
     def test_recovery_stale_bytes_are_refused_and_exact_retry_keeps_original_evidence(self):

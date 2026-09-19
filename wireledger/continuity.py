@@ -24,7 +24,7 @@ def continuity(records, *, as_of, max_gap_seconds=86400):
         except (ValueError, TypeError):
             group["unavailable_times"].append(sequence)
             group.pop("previous", None)
-            group["latest"] = None
+            group["latest"] = (sequence, None, observation["status"])
             continue
         previous = group.get("previous")
         if previous:
@@ -40,7 +40,7 @@ def continuity(records, *, as_of, max_gap_seconds=86400):
     for (host, port, vantage), group in sorted(groups.items()):
         latest = group.pop("latest", None)
         group.pop("previous", None)
-        age = (current - latest[1]).total_seconds() if latest else None
+        age = (current - latest[1]).total_seconds() if latest and latest[1] is not None else None
         state = ("time-unavailable" if age is None else "future-sample" if age < 0 else
                  "stale-sample" if age > max_gap_seconds else "within-observer-threshold")
         rows.append({"host": host, "port": port, "vantage": vantage, **group,

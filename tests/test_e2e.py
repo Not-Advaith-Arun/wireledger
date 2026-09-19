@@ -305,6 +305,52 @@ class EndToEndTests(unittest.TestCase):
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
 
+    def test_competing_checkpoint_retention_keeps_both_prefixes_and_idempotent_retries(self):
+        # Concurrency across real CLI processes cannot be checked by a single function call.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "retained"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            checkpoints = []
+            for count in (1, 2):
+                append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "local",
+                    "status": "error", "error": "Synthetic retained prefix", "observed_at": "2026-09-19T12:00:00Z"})
+                checkpoint = root / f"prefix-{count}.json"
+                self.cli("checkpoint", state, checkpoint)
+                checkpoints.append(checkpoint)
+            saved = {p: p.read_bytes() for p in (ledger, public, *checkpoints)}
+            workers = []
+            try:
+                for checkpoint in checkpoints * 3:
+                    workers.append(subprocess.Popen([sys.executable, "-m", "wireledger", "retain-checkpoint",
+                        str(checkpoint), "--store", str(retained), "--public-key", str(public)],
+                        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+                results = []
+                for worker in workers:
+                    out, err = worker.communicate(timeout=15)
+                    self.assertEqual(worker.returncode, 0, out + err)
+                    results.append(json.loads(out))
+            finally:
+                for worker in workers:
+                    if worker.poll() is None:
+                        worker.kill()
+                        worker.communicate(timeout=5)
+            self.assertEqual(sum(not row["already_retained"] for row in results), 2)
+            self.assertEqual(sum(row["already_retained"] for row in results), 4)
+            anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+            self.assertEqual(len(anchors), 2)
+            checked = self.cli("check-retained", ledger, "--store", retained, "--public-key", public)
+            self.assertTrue(checked["ok"])
+            self.assertEqual([row["relation"] for row in checked["checkpoints"]], ["consistent-prefix"] * 2)
+            for checkpoint in checkpoints:
+                self.assertTrue(self.cli("retain-checkpoint", checkpoint, "--store", retained,
+                                         "--public-key", public)["already_retained"])
+            self.assertEqual({p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}, anchors)
+            self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+            self.assertEqual(list(retained.glob(".pending-anchor-*")), [])
+
     def test_successive_retained_prefixes_reject_signed_rollback_and_fork(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

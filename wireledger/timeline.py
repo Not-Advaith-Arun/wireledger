@@ -8,7 +8,12 @@ from .probe import changes
 
 
 def timeline(records, *, at_observed_time=False, now=None, host=None, port=None,
-             vantage=None, since=None, until=None, changes_only=False):
+             vantage=None, since=None, until=None, changes_only=False,
+             after_sequence=0, limit=None):
+    if type(after_sequence) is not int or after_sequence < 0:
+        raise ValueError("after sequence must be a nonnegative integer")
+    if limit is not None and (type(limit) is not int or not 1 <= limit <= 1000):
+        raise ValueError("timeline limit must be between 1 and 1000")
     current = now if now is not None else datetime.now(timezone.utc)
     if current.tzinfo is None or current.utcoffset() is None:
         raise ValueError("timeline time must be timezone-aware")
@@ -51,10 +56,17 @@ def timeline(records, *, at_observed_time=False, now=None, host=None, port=None,
             if (lower and observed < lower) or (upper and observed > upper):
                 continue
         selected.append(row)
+    remaining = [row for row in selected if row["sequence"] > after_sequence]
+    page = remaining if limit is None else remaining[:limit]
+    more = len(page) < len(remaining)
     return {"time_policy": "observer-asserted-time" if at_observed_time else "current-time",
-            "results": selected, "total_records": len(rows), "selected_records": len(selected),
+            "results": page, "total_records": len(rows), "selected_records": len(page),
+            "matching_records": len(selected), "remaining_after_cursor": len(remaining),
+            "has_more": more, "next_after_sequence": page[-1]["sequence"] if more else None,
+            "pagination_scope": "Pages use signed sequence order after filtering. Each request verifies the whole supplied history and computes full-history changes; the display limit does not bound verification cost. Separate requests are not a locked snapshot or a proof against history substitution; retain an independently trusted checkpoint when required.",
             "filters": {"host": host, "port": port, "vantage": vantage,
-                        "since": since, "until": until, "changes_only": changes_only},
+                        "since": since, "until": until, "changes_only": changes_only,
+                        "after_sequence": after_sequence, "limit": limit},
             "selection_scope": "Full history verified before filtering; changes computed against all prior samples. Time filters use signed observer-asserted timestamps, inclusively.",
             "scope": "Certificate validity windows, not an independent path audit. Times and vantages are observer assertions; differences are not attack verdicts."}
 
@@ -63,7 +75,10 @@ def render_timeline(report):
     def quoted(value):
         return json.dumps(value, ensure_ascii=True)
 
-    lines = ["Validity time policy: " + report["time_policy"], report["scope"]]
+    lines = ["Validity time policy: " + report["time_policy"], report["scope"],
+             f"Page: {report['selected_records']} returned; {report['remaining_after_cursor']} after cursor; "
+             f"{report['matching_records']} matching; next after sequence: {report['next_after_sequence']}",
+             report["pagination_scope"]]
     for row in report["results"]:
         lines.append(f"#{row['sequence']} {quoted(row['observed_at'])} "
                      f"{quoted(row['host'])}:{row['port']} vantage={quoted(row['vantage'])}")

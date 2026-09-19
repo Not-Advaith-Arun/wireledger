@@ -69,8 +69,35 @@ class EndToEndTests(unittest.TestCase):
             ca_link = root / "trusted-ca-link.pem"
             ca_link.symlink_to(ca)
             self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca_link)["ok"])
-            timeline = self.cli("timeline", ledger, "--public-key", public, "--json")
+            timeline = self.cli("timeline", ledger, "--public-key", public, "--json", "--at-observed-time")
             self.assertEqual(timeline["total_records"], 2)
+            first_page = self.cli("timeline", ledger, "--public-key", public, "--json", "--limit", "1", "--at-observed-time")
+            self.assertEqual(first_page["matching_records"], 2)
+            self.assertEqual(first_page["remaining_after_cursor"], 2)
+            self.assertTrue(first_page["has_more"])
+            self.assertEqual(first_page["next_after_sequence"], 1)
+            second_page = self.cli("timeline", ledger, "--public-key", public, "--json", "--limit", "1",
+                                   "--after-sequence", str(first_page["next_after_sequence"]), "--at-observed-time")
+            self.assertEqual(first_page["results"] + second_page["results"], timeline["results"])
+            self.assertFalse(second_page["has_more"])
+            self.assertIsNone(second_page["next_after_sequence"])
+            self.assertEqual(second_page["remaining_after_cursor"], 1)
+            self.assertEqual(second_page["results"][0]["changes"], [])
+            for args in (("--after-sequence", "2"), ("--after-sequence", "1", "--changes-only"),
+                         ("--host", "absent.test", "--limit", "1")):
+                empty = self.cli("timeline", ledger, "--public-key", public, "--json", *args)
+                self.assertEqual(empty["results"], [])
+                self.assertFalse(empty["has_more"])
+                self.assertIsNone(empty["next_after_sequence"])
+            for args in (("--limit", "0"), ("--limit", "1001"), ("--after-sequence", "-1")):
+                self.cli("timeline", ledger, "--public-key", public, *args, expected=1)
+            page_view = subprocess.check_output([sys.executable, "-m", "wireledger", "timeline", str(ledger),
+                "--public-key", str(public), "--html", "--limit", "1"], cwd=ROOT, text=True)
+            self.assertIn("next after sequence: 1", page_view)
+            self.assertIn("not a locked snapshot", page_view)
+            page_text = subprocess.check_output([sys.executable, "-m", "wireledger", "timeline", str(ledger),
+                "--public-key", str(public), "--limit", "1"], cwd=ROOT, text=True)
+            self.assertIn("Page: 1 returned; 2 after cursor; 2 matching; next after sequence: 1", page_text)
             view = subprocess.check_output([sys.executable, "-m", "wireledger", "timeline", str(ledger),
                 "--public-key", str(public), "--html", "--max-rows", "1"], cwd=ROOT, text=True)
             self.assertIn("Showing 1 of 2 selected samples from 2 verified records", view)
@@ -200,6 +227,7 @@ class EndToEndTests(unittest.TestCase):
             self.cli("endpoints", ledger, "--public-key", public, expected=1)
             self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file, expected=1)
             self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test", expected=1)
+            self.cli("timeline", ledger, "--public-key", public, "--json", "--after-sequence", "1000", "--limit", "1", expected=1)
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)
 
 

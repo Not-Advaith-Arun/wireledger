@@ -42,6 +42,8 @@ def main(argv=None):
             check.add_argument("--since", help="inclusive observer timestamp with timezone")
             check.add_argument("--until", help="inclusive observer timestamp with timezone")
             check.add_argument("--changes-only", action="store_true", help="omit unchanged samples while retaining full-history change context")
+            check.add_argument("--after-sequence", type=int, default=0, help="return matching samples strictly after this signed sequence")
+            check.add_argument("--limit", type=int, help="return at most 1..1000 matching samples; full history is still verified")
     sampling = sub.add_parser("continuity", help="Report observer-clock sampling gaps, stale samples and clock reversals")
     sampling.add_argument("ledger", type=Path)
     sampling.add_argument("--public-key", type=Path, required=True)
@@ -212,7 +214,8 @@ def main(argv=None):
             elif args.command == "timeline":
                 result = timeline(records, at_observed_time=args.at_observed_time, host=args.host,
                                   port=args.port, vantage=args.vantage, since=args.since,
-                                  until=args.until, changes_only=args.changes_only)
+                                  until=args.until, changes_only=args.changes_only,
+                                  after_sequence=args.after_sequence, limit=args.limit)
                 if args.html:
                     from .timeline_view import render_html
                     print(render_html(result, max_rows=args.max_rows))

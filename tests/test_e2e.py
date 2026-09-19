@@ -272,6 +272,39 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(ledger.read_bytes(), saved)
 
 
+    def test_vantage_pair_budget_is_global_and_never_skips_signature_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "witness"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            for host, labels in (("a.test", ("a", "b", "c")), ("z.test", ("x", "y"))):
+                for label in labels:
+                    append(ledger, key, {"host": host, "port": 443, "vantage": label, "status": "error",
+                        "error": "Synthetic unavailable observer claim", "observed_at": "2026-09-19T12:00:00Z"})
+            original = ledger.read_bytes()
+            limited = self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "2", expected=2)
+            self.assertFalse(limited["comparisons_complete"])
+            self.assertEqual(sum(len(row["comparisons"]) for row in limited["results"]), 2)
+            self.assertEqual([(row["host"], row["omitted_pairs"]) for row in limited["results"]],
+                             [("a.test", 1), ("z.test", 1)])
+            self.assertEqual(set(limited["results"][1]["views"]), {"x", "y"})
+            self.assertEqual(limited["results"][1]["comparisons"], [])
+            complete = self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "4")
+            self.assertTrue(complete["comparisons_complete"])
+            pairs = {row["host"]: {(pair["left_vantage"], pair["right_vantage"])
+                                   for pair in row["comparisons"]} for row in complete["results"]}
+            self.assertEqual(pairs, {"a.test": {("a", "b"), ("a", "c"), ("b", "c")}, "z.test": {("x", "y")}})
+            self.assertTrue(all(row["omitted_pairs"] == 0 for row in complete["results"]))
+            self.assertEqual(ledger.read_bytes(), original)
+            rows = [json.loads(line) for line in original.splitlines()]
+            rows[-1]["body"]["observation"]["error"] = "Unsigned change in an unexamined endpoint"
+            ledger.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            damaged = ledger.read_bytes()
+            self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
+            self.assertEqual(ledger.read_bytes(), damaged)
+
     def test_successive_retained_prefixes_reject_signed_rollback_and_fork(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

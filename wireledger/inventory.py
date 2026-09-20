@@ -3,7 +3,7 @@ from collections import Counter
 from .evidence import validate_evidence
 
 
-def collection_coverage(records, expected):
+def collection_coverage(records, expected, *, exact=False):
     """Compare verified collection with explicit intended endpoint/vantage rows."""
     if not isinstance(expected, list) or not 1 <= len(expected) <= 1000:
         raise ValueError("expected collection must contain 1..1000 endpoint rows")
@@ -40,10 +40,12 @@ def collection_coverage(records, expected):
                             "observed-verified" if latest["status"] == "verified" else "latest-failed",
                         "samples": row["records"] if row else 0,
                         "latest_sequence": latest["sequence"] if latest else None})
+    unexpected = sorted(set(observed) - requested)
     return {"expected_groups": len(requested), "total_records": len(records), "results": results,
-            "unexpected_groups": [{"host": h, "port": p, "vantage": v} for h, p, v in sorted(set(observed) - requested)],
-            "needs_attention": any(row["collection_state"] != "observed-verified" for row in results),
-            "scope": "Expected manifest is an explicit local collection policy, not signed witness evidence. Full signed history is verified before selection. Latest means sequence order; an old verified sample does not establish freshness, availability, path validity or observer truth. Unexpected groups are listed, not rejected."}
+            "unexpected_groups": [{"host": h, "port": p, "vantage": v} for h, p, v in unexpected],
+            "needs_attention": any(row["collection_state"] != "observed-verified" for row in results) or bool(exact and unexpected),
+            **({"exact_collection_required": True} if exact else {}),
+            "scope": "Expected manifest is an explicit local collection policy, not signed witness evidence. Full signed history is verified before selection. Latest means sequence order; an old verified sample does not establish freshness, availability, path validity or observer truth. Unexpected groups are listed; exact mode also requires that none exist."}
 
 
 def endpoint_inventory(records):

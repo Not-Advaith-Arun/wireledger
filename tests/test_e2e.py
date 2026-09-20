@@ -63,6 +63,29 @@ class EndToEndTests(unittest.TestCase):
                 self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file, expected=1)
             expected_file.write_text(json.dumps([intended]))
             self.assertEqual(ledger.read_bytes(), before_audit)
+            strict_history = root / "coverage-with-extra.jsonl"
+            strict_history.write_bytes(before_audit)
+            append(strict_history, load_private(state / "witness.key"), {
+                "host": "unexpected.test", "port": 443, "vantage": "extra",
+                "status": "error", "error": "Synthetic extra collection claim", "observed_at": "2026-09-20T12:00:00Z"})
+            args = ("coverage", strict_history, "--public-key", public, "--expected", expected_file)
+            advisory = self.cli(*args)
+            self.assertFalse(advisory["needs_attention"])
+            self.assertEqual(advisory["unexpected_groups"], [{"host": "unexpected.test", "port": 443, "vantage": "extra"}])
+            exact = self.cli(*args, "--exact", expected=2)
+            self.assertTrue(exact["exact_collection_required"])
+            self.assertTrue(exact["needs_attention"])
+            self.assertEqual(exact["results"], advisory["results"])
+            self.assertFalse(self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file,
+                                      "--exact")["needs_attention"])
+            saved = strict_history.read_bytes()
+            rows = [json.loads(line) for line in saved.splitlines()]
+            rows[-1]["body"]["observation"]["error"] = "Unsigned excluded group change"
+            strict_history.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            damaged = strict_history.read_bytes()
+            self.cli(*args, "--exact", expected=1)
+            self.assertEqual(strict_history.read_bytes(), damaged)
+            self.assertEqual(ledger.read_bytes(), before_audit)
             fifo = root / "unavailable-ca.pem"
             os.mkfifo(fifo)
             self.cli("audit", ledger, "--public-key", public, "--ca-file", fifo, expected=1, timeout=3)

@@ -1,5 +1,6 @@
 """Verified loopback observation, offline audit and checkpoint-constrained repair."""
 import json
+import hashlib
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
@@ -304,6 +305,40 @@ class EndToEndTests(unittest.TestCase):
             damaged = ledger.read_bytes()
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
+
+    def test_mixed_trust_checkpoint_store_fails_closed_without_replacing_evidence(self):
+        # A valid signature from an untrusted witness must not be silently filtered.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            retained, absent = root / "retained", root / "must-not-be-created"
+            states, checkpoints = [], []
+            for label in ("trusted", "foreign"):
+                state, checkpoint = root / label, root / (label + ".json")
+                self.cli("init", state)
+                key = load_private(state / "witness.key")
+                append(state / "observations.jsonl", key, {"host": "fixture.test", "port": 443,
+                    "vantage": "local", "status": "error", "error": "Synthetic observer claim",
+                    "observed_at": "2026-09-20T12:00:00Z"})
+                self.cli("checkpoint", state, checkpoint)
+                states.append(state)
+                checkpoints.append(checkpoint)
+            public, ledger = states[0] / "witness.pub", states[0] / "observations.jsonl"
+            self.cli("retain-checkpoint", checkpoints[1], "--store", absent, "--public-key", public, expected=1)
+            self.assertFalse(absent.exists())
+            self.cli("retain-checkpoint", checkpoints[0], "--store", retained, "--public-key", public)
+            foreign = json.loads(checkpoints[1].read_text())
+            copied = retained / ("anchor-" + hashlib.sha256(canonical(foreign["body"])).hexdigest() + ".json")
+            copied.write_bytes(checkpoints[1].read_bytes())
+            protected = {p: p.read_bytes() for p in (*checkpoints, public, ledger, *retained.glob("anchor-*.json"))}
+            for args in (("list-retained", "--store", retained, "--public-key", public),
+                         ("check-retained", ledger, "--store", retained, "--public-key", public),
+                         ("retain-checkpoint", checkpoints[0], "--store", retained, "--public-key", public)):
+                self.cli(*args, expected=1)
+                self.assertEqual({p: p.read_bytes() for p in protected}, protected)
+                self.assertEqual(len(list(retained.glob("anchor-*.json"))), 2)
+            # Caller removes only the deliberately injected foreign test fixture.
+            copied.unlink()
+            self.assertTrue(self.cli("check-retained", ledger, "--store", retained, "--public-key", public)["ok"])
 
     def test_competing_checkpoint_retention_keeps_both_prefixes_and_idempotent_retries(self):
         # Concurrency across real CLI processes cannot be checked by a single function call.

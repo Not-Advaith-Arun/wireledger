@@ -108,6 +108,10 @@ def main(argv=None):
     inventory = sub.add_parser("list-retained", help="Inspect pinned signed checkpoint claims without an observation history")
     inventory.add_argument("--store", type=Path, required=True)
     inventory.add_argument("--public-key", type=Path, required=True)
+    stores = sub.add_parser("compare-retained", help="Compare two authenticated retained checkpoint stores without copying or merging")
+    stores.add_argument("left", type=Path)
+    stores.add_argument("right", type=Path)
+    stores.add_argument("--public-key", type=Path, required=True)
     for command in ("recovery-preview", "recovery-apply"):
         recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
         recovery.add_argument("ledger", type=Path)
@@ -144,6 +148,10 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command == "compare-retained":
+            from .retention import compare_retained
+            result = compare_retained(args.left, args.right, load_public(args.public_key))
+            code = 2 if result["needs_attention"] else 0
         elif args.command == "compare-checkpoints":
             result = compare_checkpoints(read_checkpoint(args.left), read_checkpoint(args.right),
                                          load_public(args.left_key), load_public(args.right_key))

@@ -329,6 +329,50 @@ class EndToEndTests(unittest.TestCase):
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
 
+    def test_compare_retained_stores_distinguishes_missing_claims_equal_sets_and_signed_conflicts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, left, right = root / "witness", root / "left", root / "right"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            sample = {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                      "error": "Synthetic observer claim", "observed_at": "2026-09-20T12:00:00Z"}
+            checkpoints = []
+            for count in (1, 2):
+                append(ledger, key, sample)
+                checkpoint = root / f"prefix-{count}.json"
+                self.cli("checkpoint", state, checkpoint)
+                self.cli("retain-checkpoint", checkpoint, "--store", left, "--public-key", public)
+                if count == 1:
+                    self.cli("retain-checkpoint", checkpoint, "--store", right, "--public-key", public)
+                checkpoints.append(checkpoint)
+            args = ("compare-retained", left, right, "--public-key", public)
+            missing = self.cli(*args, expected=2)
+            self.assertEqual([row["count"] for row in missing["shared"]], [1])
+            self.assertEqual([row["count"] for row in missing["only_left"]], [2])
+            self.assertEqual(missing["only_right"], [])
+            self.assertTrue(missing["ancestry_unproven"])
+            self.cli("retain-checkpoint", checkpoints[1], "--store", right, "--public-key", public)
+            equal = self.cli(*args)
+            self.assertTrue(equal["identical_claim_sets"])
+            self.assertFalse(equal["needs_attention"])
+            self.assertTrue(equal["ancestry_unproven"])
+            fork = root / "fork.jsonl"
+            fork.write_bytes(ledger.read_bytes().splitlines(keepends=True)[0])
+            append(fork, key, {**sample, "error": "Correctly signed alternative claim"})
+            fork_checkpoint = root / "fork-checkpoint.json"
+            fork_checkpoint.write_bytes(canonical(make_checkpoint(verify(fork, key.public_key()), key)))
+            self.cli("retain-checkpoint", fork_checkpoint, "--store", right, "--public-key", public, expected=2)
+            protected = {p: p.read_bytes() for p in (ledger, public, *checkpoints, fork_checkpoint,
+                         *left.glob("anchor-*.json"), *right.glob("anchor-*.json"))}
+            conflict = self.cli(*args, expected=2)
+            self.assertEqual([row["count"] for row in conflict["conflicting_heads"]], [2])
+            self.assertEqual(len(conflict["conflicting_heads"][0]["heads"]), 2)
+            self.assertFalse(conflict["identical_claim_sets"])
+            self.assertEqual([row["count"] for row in conflict["only_right"]], [2])
+            self.assertEqual({p: p.read_bytes() for p in protected}, protected)
+
     def test_mixed_trust_checkpoint_store_fails_closed_without_replacing_evidence(self):
         # A valid signature from an untrusted witness must not be silently filtered.
         with tempfile.TemporaryDirectory() as directory:

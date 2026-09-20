@@ -150,3 +150,23 @@ def list_retained(directory, key):
             "conflicting_heads": conflicts,
             "ancestry_unproven": len(heads) > 1,
             "scope": "Signatures checked against independently supplied public key. Different counts do not prove ancestry; no history, freshness or store rollback check is performed."}
+
+
+def compare_retained(left, right, key):
+    """Compare two authenticated claim sets; never infer history ancestry."""
+    one, two = list_retained(left, key), list_retained(right, key)
+    claims = [{(row["count"], row["head"]) for row in report["checkpoints"]} for report in (one, two)]
+    a, b = claims
+    combined = a | b
+    counts = {}
+    for count, head in combined:
+        counts.setdefault(count, set()).add(head)
+    conflicts = [{"count": count, "heads": sorted(heads)} for count, heads in sorted(counts.items()) if len(heads) > 1]
+    def rows(values):
+        return [{"count": count, "head": head} for count, head in sorted(values)]
+    return {"witness": one["witness"], "left_count": len(a), "right_count": len(b),
+            "identical_claim_sets": a == b, "shared": rows(a & b),
+            "only_left": rows(a - b), "only_right": rows(b - a), "conflicting_heads": conflicts,
+            "ancestry_unproven": len(counts) > 1,
+            "needs_attention": not combined or a != b or bool(conflicts),
+            "scope": "Each store authenticated under the same explicitly supplied public key, read separately under its lock. Claim-set equality/differences and same-count conflicts only. Different counts do not prove prefix ancestry. No history, freshness, store rollback, cross-store snapshot transaction, copying or merging established. Empty stores establish no retained evidence."}

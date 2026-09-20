@@ -272,6 +272,46 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(ledger.read_bytes(), saved)
 
 
+    def test_successive_retained_prefixes_reject_signed_rollback_and_fork(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "retained"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            sample = {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                      "error": "Synthetic first sample", "observed_at": "2026-09-20T00:00:00Z"}
+            append(ledger, key, sample)
+            first = ledger.read_bytes()
+            for count in (1, 2):
+                if count == 2:
+                    append(ledger, key, {**sample, "error": "Synthetic second sample"})
+                checkpoint = root / f"checkpoint-{count}.json"
+                self.cli("checkpoint", state, checkpoint)
+                self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+            original = ledger.read_bytes()
+            anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+            self.assertEqual(len(anchors), 2)
+            args = ("check-retained", ledger, "--store", retained, "--public-key", public)
+            self.assertTrue(self.cli(*args)["ok"])
+            ledger.write_bytes(first)  # Still correctly signed; merely an older prefix.
+            rollback = self.cli(*args, expected=2)
+            self.assertEqual([r["relation"] for r in rollback["checkpoints"]],
+                             ["consistent-prefix", "shorter-than-retained"])
+            self.assertEqual(ledger.read_bytes(), first)
+            append(ledger, key, {**sample, "error": "Deliberately signed alternative second sample"})
+            fork = ledger.read_bytes()
+            divergent = self.cli(*args, expected=2)
+            self.assertEqual([r["relation"] for r in divergent["checkpoints"]],
+                             ["consistent-prefix", "divergent"])
+            self.assertEqual(ledger.read_bytes(), fork)
+            ledger.write_bytes(original)
+            restored = self.cli(*args)
+            self.assertTrue(restored["ok"])
+            self.assertEqual([r["relation"] for r in restored["checkpoints"]], ["consistent-prefix"] * 2)
+            self.assertEqual(ledger.read_bytes(), original)
+            self.assertEqual({p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}, anchors)
+
     def test_recovery_stale_bytes_are_refused_and_exact_retry_keeps_original_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

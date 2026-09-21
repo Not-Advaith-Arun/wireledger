@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import socket
+import threading
+import time
 import unittest
 
 from wireledger.lab import certificates, tls_server
@@ -254,6 +257,55 @@ class EndToEndTests(unittest.TestCase):
             self.cli("timeline", ledger, "--public-key", public, "--json", "--after-sequence", "1000", "--limit", "1", expected=1)
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)
 
+
+    def test_stalled_loopback_tls_becomes_signed_failed_observation_within_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "witness"
+            self.cli("init", state)
+            ca, _ = certificates(root)
+            release, accepted = threading.Event(), threading.Event()
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(3)
+                port = listener.getsockname()[1]
+                def stalled_peer():
+                    try:
+                        connection, _ = listener.accept()
+                    except OSError:
+                        return
+                    with connection:
+                        accepted.set()
+                        release.wait(3)
+                worker = threading.Thread(target=stalled_peer, daemon=True)
+                worker.start()
+                try:
+                    started = time.monotonic()
+                    result = self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
+                        "--ca-file", ca, "--timeout", "0.3", expected=2, timeout=5)
+                    self.assertLess(time.monotonic() - started, 3)
+                    self.assertTrue(accepted.is_set())
+                finally:
+                    release.set()
+                    worker.join(timeout=4)
+                self.assertFalse(worker.is_alive())
+            observation = result["observation"]
+            self.assertEqual(observation["status"], "connection-failed")
+            self.assertEqual(observation["network_attempt"]["phase"], "tls")
+            self.assertEqual(observation["network_attempt"]["attempts"][-1]["status"], "tls-failed")
+            self.assertEqual(observation["network_attempt"]["timeout_seconds"], 0.3)
+            self.assertTrue(observation["network_attempt"]["deadline_exceeded"])
+            self.assertNotIn("certificate_sha256", observation)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            saved = ledger.read_bytes()
+            verified = self.cli("verify", ledger, "--public-key", public)
+            self.assertTrue(verified["valid"])
+            self.assertEqual(verified["count"], 1)
+            expiry = self.cli("expiry", ledger, "--public-key", public, "--as-of", observation["observed_at"], expected=2)
+            self.assertEqual(expiry["results"][0]["certificate_window"], "unavailable")
+            self.assertEqual(expiry["results"][0]["observed_status"], "connection-failed")
+            self.assertEqual(ledger.read_bytes(), saved)
 
     def test_expiry_distinguishes_leaf_windows_observer_age_and_latest_failure(self):
         with tempfile.TemporaryDirectory() as directory:

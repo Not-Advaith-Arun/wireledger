@@ -258,6 +258,40 @@ class EndToEndTests(unittest.TestCase):
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)
 
 
+    def test_loopback_handshakes_reject_wrong_hostname_and_untrusted_ca_before_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "witness"
+            self.cli("init", state)
+            ca, variants = certificates(root)
+            other = root / "untrusted-ca"
+            other.mkdir()
+            wrong_ca, _ = certificates(other)
+            cert, private = variants[0]
+            with tls_server(cert, private) as port:
+                failures = [self.cli("observe", state, host, "--port", port, "--connect-ip", "127.0.0.1",
+                    "--ca-file", trust, "--timeout", "3", expected=2)["observation"]
+                    for host, trust in (("wrong.invalid", ca), ("localhost", wrong_ca))]
+                success = self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
+                    "--ca-file", ca, "--timeout", "3")["observation"]
+            for failed in failures:
+                self.assertEqual(failed["status"], "verification-failed")
+                self.assertIsInstance(failed["error_code"], int)
+                self.assertTrue(failed["connection_attempt"]["verifier_policy"]["check_hostname"])
+                self.assertNotIn("evidence", failed)
+                self.assertNotIn("certificate_sha256", failed)
+            self.assertEqual(success["status"], "verified")
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            saved = ledger.read_bytes()
+            self.assertEqual(self.cli("verify", ledger, "--public-key", public)["count"], 3)
+            inventory = self.cli("endpoints", ledger, "--public-key", public)
+            localhost = next(row for row in inventory["results"] if row["host"] == "localhost")
+            self.assertEqual(localhost["status_counts"], {"verification-failed": 1, "verified": 1})
+            self.assertEqual(localhost["latest"]["sequence"], 3)
+            wrong = next(row for row in inventory["results"] if row["host"] == "wrong.invalid")
+            self.assertEqual(wrong["latest"]["status"], "verification-failed")
+            self.assertEqual(ledger.read_bytes(), saved)
+
     def test_stalled_loopback_tls_becomes_signed_failed_observation_within_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

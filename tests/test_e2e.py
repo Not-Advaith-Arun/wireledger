@@ -628,6 +628,46 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual({p.name:p.read_bytes() for p in evidence.iterdir()}, evidence_bytes)
             self.assertEqual(ledger.read_bytes(), valid)
 
+    def test_recovery_requires_fresh_review_after_selected_retained_claims_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "retained"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            checkpoints = []
+            for index in (1, 2):
+                append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                                     "error": "Synthetic observation " + str(index), "observed_at": "2026-09-22T00:00:00Z"})
+                checkpoint = root / (str(index) + ".json")
+                self.cli("checkpoint", state, checkpoint)
+                checkpoints.append(checkpoint)
+            self.cli("retain-checkpoint", checkpoints[0], "--store", retained, "--public-key", public)
+            valid = ledger.read_bytes()
+            ledger.write_bytes(valid + b'{"body":')
+            damaged = ledger.read_bytes()
+            plan, evidence = root / "reviewed.json", root / "evidence"
+            first = self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)
+            plan.write_text(json.dumps(first))
+            plan_bytes = plan.read_bytes()
+            self.cli("retain-checkpoint", checkpoints[1], "--store", retained, "--public-key", public)
+            anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+            args = ("recovery-apply", ledger, "--public-key", public, "--store", retained, "--plan", plan, "--evidence", evidence)
+            self.cli(*args, expected=1)
+            self.assertEqual(ledger.read_bytes(), damaged)
+            self.assertEqual(plan.read_bytes(), plan_bytes)
+            self.assertFalse(evidence.exists())
+            fresh = self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)
+            self.assertEqual(first["original_sha256"], fresh["original_sha256"])
+            self.assertEqual(len(first["selected_stores"][0]["claims"]), 1)
+            self.assertEqual(len(fresh["selected_stores"][0]["claims"]), 2)
+            plan.write_text(json.dumps(fresh))  # Explicitly review the changed retained evidence set.
+            self.assertTrue(self.cli(*args)["recovered"])
+            self.assertEqual(ledger.read_bytes(), valid)
+            self.assertEqual((evidence / "original.jsonl").read_bytes(), damaged)
+            self.assertEqual({p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}, anchors)
+            self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
+
     def test_competing_recovery_writers_repair_once_and_reuse_identical_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

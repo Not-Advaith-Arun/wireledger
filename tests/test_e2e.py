@@ -628,6 +628,79 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual({p.name:p.read_bytes() for p in evidence.iterdir()}, evidence_bytes)
             self.assertEqual(ledger.read_bytes(), valid)
 
+    def test_competing_recovery_writers_repair_once_and_reuse_identical_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "retained"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            append(ledger, load_private(state / "witness.key"),
+                   {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                    "observed_at": "2026-09-22T00:00:00Z"})
+            checkpoint = root / "checkpoint.json"
+            self.cli("checkpoint", state, checkpoint)
+            self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+            anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+            valid = ledger.read_bytes()
+            ledger.write_bytes(valid + b'{"body":')
+            damaged = ledger.read_bytes()
+            plan, evidence, ready, release = [root / name for name in ("plan.json", "evidence", "ready", "release")]
+            reviewed = self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)
+            plan.write_text(json.dumps(reviewed))
+            args = ["recovery-apply", str(ledger), "--public-key", str(public), "--store", str(retained),
+                    "--plan", str(plan), "--evidence", str(evidence)]
+            held = ("import os,sys,time; from pathlib import Path; from unittest.mock import patch; from wireledger.__main__ import main\n"
+                    "ready=Path(sys.argv.pop(1)); release=Path(sys.argv.pop(1)); original=os.ftruncate\n"
+                    "def wait(fd,length):\n"
+                    " ready.touch(); deadline=time.monotonic()+10\n"
+                    " while not release.exists():\n"
+                    "  if time.monotonic()>deadline: raise TimeoutError('test release missing')\n"
+                    "  time.sleep(.01)\n"
+                    " return original(fd,length)\n"
+                    "with patch('wireledger.recovery.os.ftruncate',wait): raise SystemExit(main())\n")
+            workers = [subprocess.Popen([sys.executable, "-c", held, str(ready), str(release), *args],
+                                        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)]
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), "writer never reached the protected truncation boundary")
+                self.assertEqual(ledger.read_bytes(), damaged)
+                saved_evidence = {p.name: p.read_bytes() for p in evidence.iterdir()}
+                waiting = ("import sys; from pathlib import Path; from unittest.mock import patch; from wireledger.__main__ import main; from wireledger.recovery import _inputs\n"
+                           "ready=Path(sys.argv.pop(1))\n"
+                           "def entering(*args,**kwargs):\n"
+                           " ready.touch(); return _inputs(*args,**kwargs)\n"
+                           "with patch('wireledger.recovery._inputs',entering): raise SystemExit(main())\n")
+                waiting_files = [root / ("waiting-" + str(index)) for index in range(2)]
+                for marker in waiting_files:
+                    workers.append(subprocess.Popen([sys.executable, "-c", waiting, str(marker), *args],
+                                                     cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+                deadline = time.monotonic() + 5
+                while not all(p.exists() for p in waiting_files) and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(all(p.exists() for p in waiting_files), "competitors did not enter recovery")
+                self.assertTrue(all(p.poll() is None for p in workers))
+                release.touch()
+                results = []
+                for worker in workers:
+                    out, err = worker.communicate(timeout=10)
+                    self.assertEqual(worker.returncode, 0, out + err)
+                    results.append(json.loads(out))
+                self.assertEqual([row["already_recovered"] for row in results], [False, True, True])
+                self.assertEqual(ledger.read_bytes(), valid)
+                self.assertEqual((evidence / "original.jsonl").read_bytes(), damaged)
+                self.assertEqual({p.name: p.read_bytes() for p in evidence.iterdir()}, saved_evidence)
+                self.assertEqual({p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}, anchors)
+                self.assertEqual(list(evidence.glob(".pending-recovery-*")), [])
+                self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
+            finally:
+                release.touch()
+                for worker in workers:
+                    if worker.poll() is None:
+                        worker.kill()
+                        worker.communicate(timeout=5)
+
     def test_recovery_process_death_at_truncation_preserves_evidence_and_exact_retry(self):
         for phase in ("before", "after"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:

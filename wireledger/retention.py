@@ -115,7 +115,10 @@ def retain_checkpoint(directory, checkpoint, key):
 
 def check_retained_history(directory, ledger, key):
     """Authenticate a history, then compare every retained signed prefix claim."""
-    records = verify(ledger, key)
+    return _check_retained_records(directory, verify(ledger, key), key)
+
+
+def _check_retained_records(directory, records, key):
     with _locked(directory) as directory:
         checkpoints = _read(directory, key)
     if not checkpoints:
@@ -170,3 +173,18 @@ def compare_retained(left, right, key):
             "ancestry_unproven": len(counts) > 1,
             "needs_attention": not combined or a != b or bool(conflicts),
             "scope": "Each store authenticated under the same explicitly supplied public key, read separately under its lock. Claim-set equality/differences and same-count conflicts only. Different counts do not prove prefix ancestry. No history, freshness, store rollback, cross-store snapshot transaction, copying or merging established. Empty stores establish no retained evidence."}
+
+
+def check_retained_stores(directories, ledger, key):
+    """Check one authenticated history snapshot against every selected store."""
+    if not isinstance(directories, (list, tuple)) or not 1 <= len(directories) <= 16:
+        raise LedgerError("select 1..16 retained stores")
+    resolved = [Path(directory).resolve() for directory in directories]
+    if len(set(resolved)) != len(resolved):
+        raise LedgerError("selected retained stores must be distinct directories")
+    records = verify(ledger, key)
+    reports = [{"store_index": index, **_check_retained_records(directory, records, key)}
+               for index, directory in enumerate(directories, 1)]
+    return {"ok": all(report["ok"] for report in reports), "witness": public_id(key),
+            "history_count": len(records), "stores": reports,
+            "scope": "One authenticated history snapshot checked against all selected locally retained claims. Stores read separately under their own locks; no cross-store snapshot transaction, independent custody, store rollback, freshness or observer-truth proof."}

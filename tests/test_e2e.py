@@ -543,6 +543,7 @@ class EndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state, retained = root / "witness", root / "retained"
+            older = root / "older-anchor"
             self.cli("init", state)
             ledger, public = state / "observations.jsonl", state / "witness.pub"
             key = load_private(state / "witness.key")
@@ -556,7 +557,15 @@ class EndToEndTests(unittest.TestCase):
                 checkpoint = root / f"checkpoint-{count}.json"
                 self.cli("checkpoint", state, checkpoint)
                 self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+                if count == 1:
+                    self.cli("retain-checkpoint", checkpoint, "--store", older, "--public-key", public)
             original = ledger.read_bytes()
+            multi_args = ("check-retained", ledger, "--store", retained, "--store", older, "--public-key", public)
+            complete = self.cli(*multi_args)
+            self.assertTrue(complete["ok"])
+            self.assertEqual([row["store_index"] for row in complete["stores"]], [1, 2])
+            self.cli("check-retained", ledger, "--store", retained, "--store", retained / ".", "--public-key", public, expected=1)
+            older_bytes = {p.name: p.read_bytes() for p in older.glob("anchor-*.json")}
             anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
             self.assertEqual(len(anchors), 2)
             args = ("check-retained", ledger, "--store", retained, "--public-key", public)
@@ -572,6 +581,11 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual([r["relation"] for r in divergent["checkpoints"]],
                              ["consistent-prefix", "divergent"])
             self.assertEqual(ledger.read_bytes(), fork)
+            self.assertTrue(self.cli("check-retained", ledger, "--store", older, "--public-key", public)["ok"])
+            combined = self.cli(*multi_args, expected=2)
+            self.assertFalse(combined["ok"])
+            self.assertEqual([row["ok"] for row in combined["stores"]], [False, True])
+            self.assertEqual({p.name: p.read_bytes() for p in older.glob("anchor-*.json")}, older_bytes)
             ledger.write_bytes(original)
             restored = self.cli(*args)
             self.assertTrue(restored["ok"])

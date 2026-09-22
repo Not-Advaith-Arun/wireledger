@@ -103,7 +103,7 @@ def main(argv=None):
     retain.add_argument("--public-key", type=Path, required=True)
     retained = sub.add_parser("check-retained", help="check a signed history against every independently retained checkpoint")
     retained.add_argument("ledger", type=Path)
-    retained.add_argument("--store", type=Path, required=True)
+    retained.add_argument("--store", type=Path, action="append", required=True, help="Retained checkpoint store; repeat to check all selected stores against one history snapshot")
     retained.add_argument("--public-key", type=Path, required=True)
     inventory = sub.add_parser("list-retained", help="Inspect pinned signed checkpoint claims without an observation history")
     inventory.add_argument("--store", type=Path, required=True)
@@ -161,8 +161,10 @@ def main(argv=None):
             result = retain_checkpoint(args.store, read_checkpoint(args.checkpoint), load_public(args.public_key))
             code = 2 if result["conflicting_heads"] else 0
         elif args.command == "check-retained":
-            from .retention import check_retained_history
-            result = check_retained_history(args.store, args.ledger, load_public(args.public_key))
+            from .retention import check_retained_history, check_retained_stores
+            key = load_public(args.public_key)
+            result = (check_retained_history(args.store[0], args.ledger, key) if len(args.store) == 1 else
+                      check_retained_stores(args.store, args.ledger, key))
             code = 0 if result["ok"] else 2
         elif args.command == "list-retained":
             from .retention import list_retained

@@ -620,9 +620,53 @@ class EndToEndTests(unittest.TestCase):
             recovered = self.cli(*args)
             self.assertFalse(recovered["already_recovered"])
             self.assertEqual(ledger.read_bytes(), valid)
+
             self.assertEqual((evidence / "original.jsonl").read_bytes(), damaged)
             evidence_bytes = {p.name:p.read_bytes() for p in evidence.iterdir()}
             retried = self.cli(*args)
             self.assertTrue(retried["already_recovered"])
             self.assertEqual({p.name:p.read_bytes() for p in evidence.iterdir()}, evidence_bytes)
             self.assertEqual(ledger.read_bytes(), valid)
+
+    def test_recovery_process_death_at_truncation_preserves_evidence_and_exact_retry(self):
+        for phase in ("before", "after"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                state, retained = root / "witness", root / "retained"
+                self.cli("init", state)
+                ledger, public = state / "observations.jsonl", state / "witness.pub"
+                append(ledger, load_private(state / "witness.key"),
+                       {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                        "observed_at": "2026-09-22T00:00:00Z"})
+                checkpoint = root / "checkpoint.json"
+                self.cli("checkpoint", state, checkpoint)
+                self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+                anchors = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+                valid = ledger.read_bytes()
+                ledger.write_bytes(valid + b'{"body":')
+                damaged = ledger.read_bytes()
+                plan, evidence = root / "reviewed.json", root / "evidence"
+                reviewed = self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)
+                plan.write_text(json.dumps(reviewed))
+                args = ["recovery-apply", str(ledger), "--public-key", str(public), "--store", str(retained),
+                        "--plan", str(plan), "--evidence", str(evidence)]
+                # A real CLI process exits without unwinding locks or cleanup, at the destructive boundary.
+                injected = ("import os,sys; from wireledger.__main__ import main; from unittest.mock import patch\n"
+                            "phase=sys.argv.pop(1); original=os.ftruncate\n"
+                            "def stop(fd,length):\n"
+                            " if phase=='after': original(fd,length)\n"
+                            " os._exit(77 if phase=='before' else 78)\n"
+                            "with patch('wireledger.recovery.os.ftruncate',stop): main()\n")
+                killed = subprocess.run([sys.executable, "-c", injected, phase, *args], cwd=ROOT,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(killed.returncode, 77 if phase == "before" else 78, killed.stdout + killed.stderr)
+                self.assertEqual(ledger.read_bytes(), damaged if phase == "before" else valid)
+                self.assertEqual((evidence / "original.jsonl").read_bytes(), damaged)
+                self.assertEqual(json.loads((evidence / "plan.json").read_text()), reviewed)
+                original_evidence = {p.name: p.read_bytes() for p in evidence.iterdir()}
+                recovered = self.cli(*args, timeout=5)  # A fresh process must reacquire the dead writer's locks.
+                self.assertEqual(recovered["already_recovered"], phase == "after")
+                self.assertEqual(ledger.read_bytes(), valid)
+                self.assertEqual({p.name: p.read_bytes() for p in evidence.iterdir()}, original_evidence)
+                self.assertEqual({p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}, anchors)
+                self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])

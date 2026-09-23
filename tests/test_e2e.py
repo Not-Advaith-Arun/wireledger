@@ -382,6 +382,44 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(ledger.read_bytes(), saved)
 
 
+    def test_attention_only_expiry_preserves_empty_and_failure_status_and_verifies_hidden_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "witness"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            args = ("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T13:00:00Z")
+            empty = self.cli(*args, "--attention-only", expected=2)
+            self.assertEqual(empty["checked_groups"], 0)
+            self.assertTrue(empty["needs_attention"])
+            key = load_private(state / "witness.key")
+            sample = {"host": "fixture.test", "port": 443, "vantage": "healthy", "status": "verified",
+                      "observed_at": "2026-10-12T13:00:00Z", "not_before": "2026-10-10T00:00:00Z",
+                      "not_after": "2027-01-01T00:00:00Z", "certificate_sha256": "a" * 64, "spki_sha256": "b" * 64}
+            append(ledger, key, sample)
+            healthy = self.cli(*args, "--attention-only")
+            self.assertEqual(healthy["results"], [])
+            self.assertFalse(healthy["needs_attention"])
+            self.assertEqual((healthy["checked_groups"], healthy["omitted_healthy_groups"]), (1, 1))
+            append(ledger, key, {**sample, "vantage": "stale", "observed_at": "2026-10-01T00:00:00Z"})
+            append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "failed", "status": "error",
+                                 "observed_at": "2026-10-12T13:00:00Z"})
+            original = ledger.read_bytes()
+            full = self.cli(*args, expected=2)
+            filtered = self.cli(*args, "--attention-only", expected=2)
+            self.assertEqual([row["vantage"] for row in filtered["results"]], ["stale", "failed"])
+            self.assertEqual(filtered["results"], [row for row in full["results"] if row["vantage"] != "healthy"])
+            self.assertEqual((filtered["checked_groups"], filtered["omitted_healthy_groups"]), (3, 1))
+            self.assertNotIn("attention_only", full)
+            self.assertEqual(ledger.read_bytes(), original)
+            records = [json.loads(line) for line in original.splitlines()]
+            records[0]["body"]["observation"]["host"] = "forged-hidden-healthy.test"
+            ledger.write_bytes(b"".join(canonical(row) + b"\n" for row in records))
+            tampered = ledger.read_bytes()
+            rejected = self.cli(*args, "--attention-only", expected=1)
+            self.assertIn("error", rejected)
+            self.assertNotIn("results", rejected)
+            self.assertEqual(ledger.read_bytes(), tampered)
+
     def test_vantage_pair_budget_is_global_and_never_skips_signature_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

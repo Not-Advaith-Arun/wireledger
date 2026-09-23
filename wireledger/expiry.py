@@ -3,7 +3,7 @@ import math
 from .evidence import parse_time, validate_evidence
 
 
-def expiry(records, *, as_of, within_days=30, max_age_seconds=86400):
+def expiry(records, *, as_of, within_days=30, max_age_seconds=86400, attention_only=False):
     now = parse_time(as_of)
     for value, maximum, label in ((within_days,365,"within days"),(max_age_seconds,31536000,"max age seconds")):
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0 <= value <= maximum:
@@ -32,6 +32,9 @@ def expiry(records, *, as_of, within_days=30, max_age_seconds=86400):
                      "not_after":obs.get("not_after") if remaining is not None else None,
                      "sampling_state":sampling,"age_seconds":age})
     rows.sort(key=lambda r:(r["seconds_until_expiry"] is None,r["seconds_until_expiry"] or 0,r["host"],r["port"],r["vantage"]))
+    attention = [r for r in rows if r["certificate_window"]!="beyond-horizon" or r["sampling_state"]!="within-observer-threshold"]
     return {"as_of":now.isoformat(),"within_days":within_days,"max_age_seconds":max_age_seconds,
-            "results":rows,"needs_attention":not rows or any(r["certificate_window"]!="beyond-horizon" or r["sampling_state"]!="within-observer-threshold" for r in rows),
-            "scope":"Full signed history verified before selecting the latest sequence per endpoint/vantage. Certificate windows use captured observer claims, not a new handshake, independent freshness, path audit or renewal guarantee. A later failed sample is unavailable; older success is not silently substituted."}
+            "results":attention if attention_only else rows,"needs_attention":not rows or bool(attention),
+            **({"attention_only":True,"checked_groups":len(rows),"omitted_healthy_groups":len(rows)-len(attention)} if attention_only else {}),
+            "scope":"Full signed history verified before selecting the latest sequence per endpoint/vantage. Certificate windows use captured observer claims, not a new handshake, independent freshness, path audit or renewal guarantee. A later failed sample is unavailable; older success is not silently substituted." +
+                    (" Only healthy beyond-horizon, within-observer-threshold rows omitted; an empty filtered report is not proof of collection coverage. Empty history still requires attention." if attention_only else "")}

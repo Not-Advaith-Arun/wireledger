@@ -71,6 +71,7 @@ def main(argv=None):
     expiration.add_argument("--as-of", required=True)
     expiration.add_argument("--within-days", type=float, default=30)
     expiration.add_argument("--max-age-seconds", type=float, default=86400)
+    expiration.add_argument("--attention-only", action="store_true", help="Omit healthy expiry rows after full verification, retaining checked/omitted counts and overall attention status")
     views = sub.add_parser("vantages", help="Compare latest signed-sequence views across recorded vantage labels")
     views.add_argument("ledger", type=Path)
     views.add_argument("--public-key", type=Path, required=True)
@@ -210,7 +211,8 @@ def main(argv=None):
                 result = fingerprint_reuse(records)
             elif args.command == "expiry":
                 from .expiry import expiry
-                result = expiry(records, as_of=args.as_of, within_days=args.within_days, max_age_seconds=args.max_age_seconds)
+                result = expiry(records, as_of=args.as_of, within_days=args.within_days, max_age_seconds=args.max_age_seconds,
+                                attention_only=args.attention_only)
                 code = 2 if result["needs_attention"] else 0
             elif args.command == "vantages":
                 from .vantages import compare_vantages

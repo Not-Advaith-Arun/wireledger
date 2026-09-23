@@ -522,6 +522,49 @@ class EndToEndTests(unittest.TestCase):
             refused = self.cli(*args, "--csv", expected=1)
             self.assertIn("error", refused)
 
+    def test_bundle_capacity_preflight_preserves_claims_and_exact_fit_retries(self):
+        # A smaller store ceiling in the actual CLI subprocess reaches the same
+        # critical union-capacity branch without manufacturing 1024 signed files.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, target, source = root / "witness", root / "target", root / "source"
+            self.cli("init",state)
+            key = load_private(state / "witness.key")
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            for index in range(4):
+                append(ledger,key,{"host":"fixture.test","port":443,"vantage":"local","status":"error","error":str(index)})
+                checkpoint = root / "checkpoint.json"
+                checkpoint.write_text(json.dumps(make_checkpoint(verify(ledger,key.public_key()),key)))
+                self.cli("retain-checkpoint",checkpoint,"--store",target if index < 2 else source,"--public-key",public)
+            bundle = self.cli("export-retained","--store",source,"--public-key",public)
+            input = root / "bundle.json"; input.write_text(json.dumps(bundle))
+            old = {p.name:p.read_bytes() for p in target.glob("anchor-*.json")}
+            original, history = input.read_bytes(), ledger.read_bytes()
+            code = ("import sys; from unittest.mock import patch; from wireledger.__main__ import main\n"
+                    "limit=int(sys.argv.pop(1))\n"
+                    "with patch('wireledger.retention.MAX_CHECKPOINTS',limit):\n"
+                    " raise SystemExit(main(sys.argv[1:]))\n")
+            def limited(limit, expected):
+                result = subprocess.run([sys.executable,"-c",code,str(limit),"import-retained",str(input),"--store",str(target),
+                    "--public-key",str(public)],cwd=ROOT,capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
+                return json.loads(result.stdout) if result.stdout else {"error": result.stderr}
+            refused = limited(3,1)
+            self.assertIn("remaining checkpoint store capacity",refused["error"])
+            self.assertEqual({p.name:p.read_bytes() for p in target.glob("anchor-*.json")},old)
+            self.assertEqual(list(target.glob(".pending-anchor-*")),[])
+            accepted = limited(4,0)
+            self.assertEqual((accepted["added_claims"],accepted["total_claims"]),(2,4))
+            self.assertEqual(limited(4,0)["added_claims"],0)
+            self.assertEqual({p.name:p.read_bytes() for p in target.glob("anchor-*.json") if p.name in old},old)
+            self.assertTrue(self.cli("check-retained",ledger,"--store",target,"--public-key",public)["ok"])
+            too_large, absent = root / "too-large.json", root / "absent"
+            too_large.write_text(json.dumps({**bundle,"checkpoints":[bundle["checkpoints"][0]]*1025}))
+            self.cli("import-retained",too_large,"--store",absent,"--public-key",public,expected=1)
+            self.assertFalse(absent.exists())
+            self.assertEqual(input.read_bytes(),original)
+            self.assertEqual(ledger.read_bytes(),history)
+
     def test_bundle_process_exit_leaves_valid_subset_and_competing_retries_complete_once(self):
         # Real process exit and competing CLI retries cover persistence/locking;
         # ordinary successful import cannot establish this recovery property.

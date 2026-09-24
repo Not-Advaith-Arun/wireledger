@@ -4,11 +4,11 @@ import math
 from pathlib import Path
 
 from .inventory import expected_endpoints
-from .ledger import append, load_private, verify
+from .ledger import append, load_private, load_public, verify, record_hash, ZERO
 from .probe import observe
 
 
-def observe_policy(directory, expected, *, connect_ip=None, cafile=None, timeout=5):
+def _parameters(expected, *, connect_ip=None, timeout=5):
     rows = sorted(expected_endpoints(expected))
     if len(rows) > 16:
         raise ValueError('policy collection requires at most16 endpoint/vantage rows')
@@ -18,6 +18,23 @@ def observe_policy(directory, expected, *, connect_ip=None, cafile=None, timeout
         connect_ip = str(ipaddress.ip_address(connect_ip))
         if '%' in connect_ip:
             raise ValueError('scoped connection addresses are not supported')
+    return rows,connect_ip
+
+
+def preview_policy(directory, expected, *, connect_ip=None, cafile=None, timeout=5):
+    rows,connect_ip = _parameters(expected,connect_ip=connect_ip,timeout=timeout)
+    directory=Path(directory)
+    records=verify(directory/'observations.jsonl',load_public(directory/'witness.pub'))
+    return {'preview':True,'selected_endpoints':len(rows),
+            'endpoints':[{'host':host,'port':port,'vantage':vantage} for host,port,vantage in rows],
+            'connect_ip':connect_ip,'timeout_per_endpoint_seconds':timeout,
+            'trust_source':'explicit CA file' if cafile is not None else 'system default',
+            'history_records':len(records),'history_head':record_hash(records[-1]) if records else ZERO,
+            'scope':'Read-only normalized collection preview under the local witness public key. No private key,CA file,DNS,TCP,TLS or append attempted. Connectivity,private-key availability and trust-file validity remain untested; later collection independently revalidates and may append a partial prefix. No observations,freshness,network truth or cost guarantee implied.'}
+
+
+def observe_policy(directory, expected, *, connect_ip=None, cafile=None, timeout=5):
+    rows,connect_ip = _parameters(expected,connect_ip=connect_ip,timeout=timeout)
     directory = Path(directory)
     key = load_private(directory/'witness.key')
     ledger = directory/'observations.jsonl'

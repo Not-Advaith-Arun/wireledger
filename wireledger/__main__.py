@@ -27,6 +27,7 @@ def main(argv=None):
                        help="total DNS/TCP/TLS network budget in seconds (0 < value <= 60)")
     collection = sub.add_parser("observe-policy", help="Collect each explicit endpoint/vantage once, sequentially, retaining signed failures; at most16 rows")
     collection.add_argument("directory", type=Path)
+    collection.add_argument("--preview",action="store_true",help="Normalize/validate policy and current public-key history without private-key access,network or append")
     collection.add_argument("--expected", type=Path, required=True)
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
@@ -165,11 +166,12 @@ def main(argv=None):
             result = {"sequence": record["body"]["sequence"], "observation": observation}
             code = 0 if observation["status"] == "verified" else 2
         elif args.command == "observe-policy":
-            from .collection import observe_policy
+            from .collection import observe_policy, preview_policy
             from .ledger import parse, _read
-            result = observe_policy(args.directory, parse(_read(args.expected)), connect_ip=args.connect_ip,
+            operation = preview_policy if args.preview else observe_policy
+            result = operation(args.directory, parse(_read(args.expected)), connect_ip=args.connect_ip,
                                     cafile=args.ca_file, timeout=args.timeout)
-            code = 0 if result["all_verified"] else 2
+            code = 0 if args.preview or result["all_verified"] else 2
         elif args.command == "checkpoint":
             key = load_private(args.directory / "witness.key")
             records = verify(args.directory / "observations.jsonl", key.public_key())

@@ -72,7 +72,12 @@ def endpoint_inventory(records):
         key = obs["host"], obs["port"], obs["vantage"]
         group = groups.setdefault(key, {"records": 0, "status_counts": Counter(),
                                        "first_sequence": record["body"]["sequence"],
-                                       "first_observed_at": obs.get("observed_at")})
+                                       "first_observed_at": obs.get("observed_at"),"consecutive_failures":0,"last_verified_sequence":None})
+        if obs["status"] == "verified":
+            group["consecutive_failures"] = 0
+            group["last_verified_sequence"] = record["body"]["sequence"]
+        else:
+            group["consecutive_failures"] += 1
         group["records"] += 1
         group["status_counts"][obs["status"]] += 1
         group["latest"] = {"sequence": record["body"]["sequence"], "status": obs["status"],
@@ -90,3 +95,13 @@ def collection_policy(records):
     groups = endpoint_inventory(records)["results"]
     requested = expected_endpoints([{key:row[key] for key in ("host", "port", "vantage")} for row in groups])
     return [{"host":host,"port":port,"vantage":vantage} for host,port,vantage in sorted(requested)]
+
+
+def failure_streaks(records):
+    inventory = endpoint_inventory(records)
+    selected = [{key:row[key] for key in ('host','port','vantage','consecutive_failures','last_verified_sequence','latest')}
+                for row in inventory['results'] if row['consecutive_failures']]
+    return {'total_records':inventory['total_records'],'checked_groups':inventory['endpoint_vantage_groups'],
+            'failing_groups':len(selected),'omitted_nonfailing_groups':inventory['endpoint_vantage_groups']-len(selected),
+            'needs_attention':bool(selected),'results':selected,
+            'scope':'Consecutive non-verified signed samples within each endpoint/vantage group in sequence order,reset by a verified sample. Interleaved groups do not interrupt a streak. Last verified sequence is a historical observer claim,not current availability,wall-clock freshness,network truth or an independent trust audit. Missing expected groups require explicit coverage policy. Full history authenticated; no error details or certificate bodies emitted.'}

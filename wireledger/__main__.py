@@ -31,7 +31,7 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "failures"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
@@ -243,7 +243,11 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "certificate-info":
+            if args.command == "failures":
+                from .inventory import failure_streaks
+                result = failure_streaks(records)
+                code = 2 if result["needs_attention"] else 0
+            elif args.command == "certificate-info":
                 from .chain_export import certificate_info
                 result = certificate_info(records,args.sequence,args.index)
             elif args.command == "certificate-chain":

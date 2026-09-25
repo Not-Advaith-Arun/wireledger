@@ -1,6 +1,6 @@
 """Bounded, independently retained public checkpoints. No transport or freshness."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import hashlib
 import os
@@ -131,7 +131,7 @@ def export_bundle(directory, key):
     return {"format": "wireledger.checkpoint-bundle.v1", "witness": public_id(key), "checkpoints": checkpoints}
 
 
-def retain_bundle(directory, bundle, key):
+def retain_bundle(directory, bundle, key, *, preview=False):
     if (not isinstance(bundle, dict) or set(bundle) != {"format", "witness", "checkpoints"}
             or bundle["format"] != "wireledger.checkpoint-bundle.v1" or bundle["witness"] != public_id(key)):
         raise LedgerError("bundle must match the independently supplied public key and supported format")
@@ -145,22 +145,25 @@ def retain_bundle(directory, bundle, key):
         if name in prepared:
             raise LedgerError("bundle contains a duplicate checkpoint claim")
         prepared[name] = checkpoint
-    with _locked(directory, create=True) as directory:
-        existing = _read(directory, key)
+    directory = Path(directory)
+    absent = preview and not directory.exists() and not directory.is_symlink()
+    with (nullcontext(directory) if absent else _locked(directory, create=not preview)) as directory:
+        existing = [] if absent else _read(directory, key)
         names = {"anchor-" + hashlib.sha256(canonical(cp["body"])).hexdigest() + ".json" for cp in existing}
         added = len(set(prepared) - names)
         if len(existing) + added > MAX_CHECKPOINTS:
             raise LedgerError("bundle exceeds remaining checkpoint store capacity; existing claims preserved")
-        for name, checkpoint in prepared.items():
-            _publish_claim(directory, name, canonical(checkpoint), name in names)
+        if not preview:
+            for name, checkpoint in prepared.items():
+                _publish_claim(directory, name, canonical(checkpoint), name in names)
         heads = {}
         for checkpoint in existing + incoming:
             body = checkpoint["body"]
             heads.setdefault(body["count"], set()).add(body["head"])
-    return {"retained": True, "witness": public_id(key), "imported_claims": len(incoming),
+    return {"retained": not preview, "preview": preview, "witness": public_id(key), "imported_claims": len(incoming),
             "added_claims": added, "already_retained_claims": len(incoming) - added,
             "total_claims": len(existing) + added, "conflicting_heads": any(len(h) > 1 for h in heads.values()),
-            "scope": "Every incoming/existing signature and capacity checked before claim publication against your supplied key. Each claim publishes atomically; the bundle is not a transaction. I/O failure may leave a valid partial subset: preserve the store and retry the exact bundle. Signed conflicts retained, never overwritten. No bundle authenticity, independent custody, ancestry, freshness or observer truth established."}
+            "scope": (("Preview only: no claims published or destination created. Existing store locking may create its lock file. Counts/conflicts describe the checked snapshot, not a reservation or authorization; a later import revalidates everything and may differ. " if preview else "") + "Every incoming/existing signature and capacity checked before claim publication against your supplied key. Each claim publishes atomically; the bundle is not a transaction. I/O failure may leave a valid partial subset: preserve the store and retry the exact bundle. Signed conflicts retained, never overwritten. No bundle authenticity, independent custody, ancestry, freshness or observer truth established.")}
 
 
 def _check_retained_records(directory, records, key):

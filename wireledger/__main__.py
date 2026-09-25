@@ -120,6 +120,7 @@ def main(argv=None):
         bundle.add_argument("--public-key", type=Path, required=True)
         if name == "import-retained":
             bundle.add_argument("input", type=Path, help="Checkpoint bundle; all signatures checked before per-file publication")
+            bundle.add_argument("--preview", action="store_true", help="Authenticate and report proposed claim counts/conflicts without publishing claims")
     for command in ("recovery-preview", "recovery-apply"):
         recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
         recovery.add_argument("ledger", type=Path)
@@ -161,7 +162,7 @@ def main(argv=None):
             from .ledger import parse, _read
             key = load_public(args.public_key)
             result = (export_bundle(args.store, key) if args.command == "export-retained" else
-                      retain_bundle(args.store, parse(_read(args.input)), key))
+                      retain_bundle(args.store, parse(_read(args.input)), key, preview=args.preview))
             code = 2 if result.get("conflicting_heads") else 0
         elif args.command == "compare-retained":
             from .retention import compare_retained

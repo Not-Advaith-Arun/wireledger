@@ -3,8 +3,8 @@ from collections import Counter
 from .evidence import validate_evidence
 
 
-def collection_coverage(records, expected, *, exact=False):
-    """Compare verified collection with explicit intended endpoint/vantage rows."""
+def expected_endpoints(expected):
+    """Normalize and validate explicit endpoint policy before any collection."""
     if not isinstance(expected, list) or not 1 <= len(expected) <= 1000:
         raise ValueError("expected collection must contain 1..1000 endpoint rows")
     requested = set()
@@ -29,6 +29,12 @@ def collection_coverage(records, expected, *, exact=False):
         if key in requested:
             raise ValueError("duplicate expected endpoint/vantage")
         requested.add(key)
+    return requested
+
+
+def collection_coverage(records, expected, *, exact=False):
+    """Compare verified collection with explicit intended endpoint/vantage rows."""
+    requested = expected_endpoints(expected)
     inventory = endpoint_inventory(records)
     observed = {(row["host"], row["port"], row["vantage"]): row for row in inventory["results"]}
     results = []

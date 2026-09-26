@@ -93,6 +93,9 @@ def main(argv=None):
     checkpoint = sub.add_parser("checkpoint", help="sign current head; keep a copy outside the witness directory")
     checkpoint.add_argument("directory", type=Path)
     checkpoint.add_argument("output", type=Path)
+    inspect_checkpoint = sub.add_parser("inspect-checkpoint", help="Authenticate one checkpoint claim before choosing retention or history verification")
+    inspect_checkpoint.add_argument("checkpoint", type=Path)
+    inspect_checkpoint.add_argument("--public-key", type=Path, required=True)
     comparison = sub.add_parser("compare", help="compare two histories after verifying each witness signature")
     comparison.add_argument("left", type=Path)
     comparison.add_argument("right", type=Path)
@@ -206,6 +209,9 @@ def main(argv=None):
             from .recovery import recovery_apply
             result = recovery_apply(args.ledger, load_public(args.public_key), args.store,
                                     parse(_read(args.plan)), args.evidence, plan_path=args.plan)
+        elif args.command == "inspect-checkpoint":
+            from .checkpoint_inspection import inspect_checkpoint
+            result = inspect_checkpoint(args.checkpoint, load_public(args.public_key))
         elif args.command == "compare":
             histories, keys = [], []
             for name in ("left", "right"):

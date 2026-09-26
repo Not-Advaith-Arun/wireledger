@@ -68,6 +68,7 @@ def main(argv=None):
     inventory.add_argument("ledger", type=Path)
     inventory.add_argument("--public-key", type=Path, required=True)
     inventory.add_argument("--checkpoint", type=Path)
+    inventory.add_argument("--policy", action="store_true", help="Export unsigned endpoint/vantage policy candidate from observed groups; review intent before using with coverage/observe-policy")
     reuse = sub.add_parser("fingerprint-reuse", help="Inspect shared latest certificate/key fingerprints across distinct endpoints")
     reuse.add_argument("ledger", type=Path)
     reuse.add_argument("--public-key", type=Path, required=True)
@@ -238,8 +239,8 @@ def main(argv=None):
                 result = collection_coverage(records, parse(_read(args.expected)), exact=args.exact, after_sequence=args.after_sequence)
                 code = 2 if result["needs_attention"] else 0
             elif args.command == "endpoints":
-                from .inventory import endpoint_inventory
-                result = endpoint_inventory(records)
+                from .inventory import endpoint_inventory, collection_policy
+                result = collection_policy(records) if args.policy else endpoint_inventory(records)
             elif args.command == "fingerprint-reuse":
                 from .reuse import fingerprint_reuse
                 result = fingerprint_reuse(records)

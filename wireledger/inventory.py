@@ -78,3 +78,10 @@ def endpoint_inventory(records):
             for (host,port,vantage),group in sorted(groups.items())]
     return {"total_records": len(records), "endpoint_vantage_groups": len(rows), "results": rows,
             "scope": "Full verified signed sequence inventory. First/latest are sequence order, not a trusted wall clock; observer labels and timestamps are claims. No certificate bodies or error details exported. Counts do not establish collection completeness, network truth or independent witnesses."}
+
+
+def collection_policy(records):
+    """Produce an unsigned, caller-reviewed policy candidate from verified groups."""
+    groups = endpoint_inventory(records)["results"]
+    requested = expected_endpoints([{key:row[key] for key in ("host", "port", "vantage")} for row in groups])
+    return [{"host":host,"port":port,"vantage":vantage} for host,port,vantage in sorted(requested)]

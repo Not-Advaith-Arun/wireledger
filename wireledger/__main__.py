@@ -71,6 +71,9 @@ def main(argv=None):
     inventory.add_argument("ledger", type=Path)
     inventory.add_argument("--public-key", type=Path, required=True)
     inventory.add_argument("--checkpoint", type=Path)
+    inventory.add_argument("--host", help="Exact signed hostname, no normalization")
+    inventory.add_argument("--vantage", help="Exact signed vantage label")
+    inventory.add_argument("--failed-only", action="store_true", help="Only groups whose latest signed sequence reports failure")
     inventory.add_argument("--policy", action="store_true", help="Export unsigned endpoint/vantage policy candidate from observed groups; review intent before using with coverage/observe-policy")
     reuse = sub.add_parser("fingerprint-reuse", help="Inspect shared latest certificate/key fingerprints across distinct endpoints")
     reuse.add_argument("ledger", type=Path)
@@ -249,7 +252,18 @@ def main(argv=None):
                 code = 2 if result["needs_attention"] else 0
             elif args.command == "endpoints":
                 from .inventory import endpoint_inventory, collection_policy
+                if args.policy and (args.host is not None or args.vantage is not None or args.failed_only):
+                    raise ValueError("policy export requires the complete inventory; selection flags are report-only")
                 result = collection_policy(records) if args.policy else endpoint_inventory(records)
+                if not args.policy and (args.host is not None or args.vantage is not None or args.failed_only):
+                    all_rows = result["results"]
+                    result["results"] = [row for row in all_rows
+                        if (args.host is None or row["host"] == args.host)
+                        and (args.vantage is None or row["vantage"] == args.vantage)
+                        and (not args.failed_only or row["latest"]["status"] != "verified")]
+                    result.update(selected_groups=len(result["results"]),omitted_groups=len(all_rows)-len(result["results"]),
+                                  filters={"host":args.host,"vantage":args.vantage,"failed_only":args.failed_only})
+                    result["scope"] += " Selection limits output only, all history authenticated. Omitted groups remain outside this view, not healthy or absent."
             elif args.command == "fingerprint-reuse":
                 from .reuse import fingerprint_reuse
                 result = fingerprint_reuse(records)

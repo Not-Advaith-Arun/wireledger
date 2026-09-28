@@ -111,6 +111,7 @@ def main(argv=None):
     checkpoint.add_argument("output", type=Path)
     inspect_checkpoint = sub.add_parser("inspect-checkpoint", help="Authenticate one checkpoint claim before choosing retention or history verification")
     inspect_checkpoint.add_argument("checkpoint", type=Path)
+    inspect_checkpoint.add_argument("--html", action="store_true", help="Offline signature-checked checkpoint cards")
     inspect_checkpoint.add_argument("--public-key", type=Path, required=True)
     comparison = sub.add_parser("compare", help="compare two histories after verifying each witness signature")
     comparison.add_argument("left", type=Path)
@@ -130,9 +131,11 @@ def main(argv=None):
     retain.add_argument("--public-key", type=Path, required=True)
     retained = sub.add_parser("check-retained", help="check a signed history against every independently retained checkpoint")
     retained.add_argument("ledger", type=Path)
+    retained.add_argument("--html", action="store_true", help="Offline checked relations; mismatches retain failure exit status")
     retained.add_argument("--store", type=Path, action="append", required=True, help="Retained checkpoint store; repeat to check all selected stores against one history snapshot")
     retained.add_argument("--public-key", type=Path, required=True)
     inventory = sub.add_parser("list-retained", help="Inspect pinned signed checkpoint claims without an observation history")
+    inventory.add_argument("--html", action="store_true", help="Offline authenticated claims; history/freshness remain unchecked")
     inventory.add_argument("--store", type=Path, required=True)
     inventory.add_argument("--public-key", type=Path, required=True)
     stores = sub.add_parser("compare-retained", help="Compare two authenticated retained checkpoint stores without copying or merging")
@@ -323,7 +326,11 @@ def main(argv=None):
                 if not args.json:
                     print(render_timeline(result))
                     return 0
-        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if args.command in ("inspect-checkpoint","check-retained","list-retained") and args.html:
+            from .checkpoint_view import render_checkpoints
+            print(render_checkpoints(result))
+        else:
+            print(json.dumps(result, indent=2, ensure_ascii=True))
         return code
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=True), file=sys.stderr)

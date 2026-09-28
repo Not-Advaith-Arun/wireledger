@@ -99,6 +99,7 @@ def main(argv=None):
     expiration.add_argument("--attention-only", action="store_true", help="Omit healthy expiry rows after full verification, retaining checked/omitted counts and overall attention status")
     views = sub.add_parser("vantages", help="Compare latest signed-sequence views across recorded vantage labels")
     views.add_argument("ledger", type=Path)
+    views.add_argument("--html", action="store_true", help="Content-minimized offline label comparisons; incomplete remains nonzero")
     views.add_argument("--public-key", type=Path, required=True)
     views.add_argument("--checkpoint", type=Path)
     views.add_argument("--max-pairs", type=int, default=1000, help="Global pair-comparison budget, 1..10000")
@@ -328,7 +329,10 @@ def main(argv=None):
                 if not args.json:
                     print(render_timeline(result))
                     return 0
-        if args.command in ("coverage","continuity") and args.html:
+        if args.command == "vantages" and args.html:
+            from .vantage_view import render_vantages
+            print(render_vantages(result))
+        elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
         elif args.command in ("inspect-checkpoint","check-retained","list-retained") and args.html:

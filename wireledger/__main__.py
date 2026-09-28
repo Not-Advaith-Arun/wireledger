@@ -62,12 +62,14 @@ def main(argv=None):
             check.add_argument("--limit", type=int, help="return at most 1..1000 matching samples; full history is still verified")
     sampling = sub.add_parser("continuity", help="Report observer-clock sampling gaps, stale samples and clock reversals")
     sampling.add_argument("ledger", type=Path)
+    sampling.add_argument("--html", action="store_true", help="Offline observer-clock gap review; failure exit status preserved")
     sampling.add_argument("--public-key", type=Path, required=True)
     sampling.add_argument("--checkpoint", type=Path)
     sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
     coverage = sub.add_parser("coverage", help="Compare signed observations with an explicit expected endpoint/vantage manifest")
     coverage.add_argument("ledger", type=Path)
+    coverage.add_argument("--html", action="store_true", help="Offline explicit-policy coverage review; missing groups remain attention")
     coverage.add_argument("--public-key", type=Path, required=True)
     coverage.add_argument("--checkpoint", type=Path)
     coverage.add_argument("--expected", type=Path, required=True, help="JSON array of host/port/vantage objects; no network calls")
@@ -326,7 +328,10 @@ def main(argv=None):
                 if not args.json:
                     print(render_timeline(result))
                     return 0
-        if args.command in ("inspect-checkpoint","check-retained","list-retained") and args.html:
+        if args.command in ("coverage","continuity") and args.html:
+            from .sampling_view import render_sampling
+            print(render_sampling(result))
+        elif args.command in ("inspect-checkpoint","check-retained","list-retained") and args.html:
             from .checkpoint_view import render_checkpoints
             print(render_checkpoints(result))
         else:

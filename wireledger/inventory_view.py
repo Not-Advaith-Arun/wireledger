@@ -8,4 +8,4 @@ def render_inventory(report):
         latest=row['latest'];rows.append({'group':latest['status'],'cells':[
             row['host']+':'+str(row['port']),row['vantage'],latest['status'],row['records'],latest['sequence'],row['consecutive_failures'],row['last_verified_sequence']]})
     scope=report['scope']+' This is an exported inventory snapshot, not a live monitor. Omitted endpoint groups are not proven healthy or absent.'
-    return render_report('Wireledger endpoint inventory',scope,['Endpoint','Vantage','Latest recorded status','Signed samples','Latest sequence','Consecutive failures','Last verified sequence'],rows,payload=report)
+    return render_report('Wireledger endpoint inventory',scope,['Endpoint','Vantage','Latest recorded status','Signed samples','Latest sequence','Consecutive failures','Last verified sequence'],rows,payload=report,summary="Captured signed-sequence inventory, not a live monitor. Signature validity does not establish freshness or observer truth.")

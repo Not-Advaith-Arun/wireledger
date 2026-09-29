@@ -20,5 +20,6 @@ def render_checkpoints(report):
     status=('All selected claims match this authenticated history.' if report.get('ok') is True else
             'Attention: selected claims do not all match this history.' if report.get('ok') is False else
             'Signatures checked; history consistency was not checked.')
+    critical=("Conflicting signed checkpoint heads recorded." if report.get('conflicting_heads') else status)+" Independently trust the supplied key; freshness and observer truth remain unproven."
     return render_report('Wireledger retained checkpoint review',report['scope']+' '+status+' Independently trust the supplied key. No live sampling, freshness or observer-truth guarantee.',
-                         ['Signed record count','Claimed head','Checked relation'],rows,payload=report)
+                         ['Signed record count','Claimed head','Checked relation'],rows,payload=report,summary=critical)

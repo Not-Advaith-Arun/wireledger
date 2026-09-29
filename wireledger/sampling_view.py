@@ -17,4 +17,4 @@ def render_sampling(report):
         scope=report['scope']+f" Explicit comparison time: {report['as_of']}; maximum gap: {report['max_gap_seconds']} seconds. Authenticated records: {report['total_records']}."
         columns=['Endpoint','Vantage','Observer-clock state','Latest signed status','Observer age seconds','Recorded timing gaps']
     scope+=' Attention required.' if report['needs_attention'] else ' No attention condition detected under these explicit inputs.'
-    return render_report('Wireledger sampling coverage review',scope,columns,rows,payload=report)
+    return render_report('Wireledger sampling coverage review',scope,columns,rows,payload=report,summary=("Attention required. " if report["needs_attention"] else "No attention condition detected under these inputs. ")+"Signed sampling evidence under explicit policy or observer-clock thresholds; no live availability or independent freshness claim.")

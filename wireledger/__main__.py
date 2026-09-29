@@ -144,6 +144,7 @@ def main(argv=None):
     inventory.add_argument("--store", type=Path, required=True)
     inventory.add_argument("--public-key", type=Path, required=True)
     stores = sub.add_parser("compare-retained", help="Compare two authenticated retained checkpoint stores without copying or merging")
+    stores.add_argument("--html",action="store_true",help="Authenticated claim-set cards only; no ancestry, copying or merging")
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
@@ -340,6 +341,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "compare-retained" and args.html:
+            from .retained_comparison_view import render_retained_comparison
+            print(render_retained_comparison(result))
         elif args.command in ("inspect-checkpoint","check-retained","list-retained") and args.html:
             from .checkpoint_view import render_checkpoints
             print(render_checkpoints(result))

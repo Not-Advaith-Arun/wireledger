@@ -126,6 +126,7 @@ def main(argv=None):
     comparison.add_argument("--left-checkpoint", type=Path)
     comparison.add_argument("--right-checkpoint", type=Path)
     anchors = sub.add_parser("compare-checkpoints", help="verify and compare two signed checkpoint claims")
+    anchors.add_argument("--html",action="store_true",help="Detached authenticated pair metadata; no history ancestry/freshness proof")
     anchors.add_argument("left", type=Path)
     anchors.add_argument("right", type=Path)
     anchors.add_argument("--left-key", type=Path, required=True)
@@ -344,6 +345,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "compare-checkpoints" and args.html:
+            from .checkpoint_pair_view import render_pair
+            print(render_pair(result))
         elif args.command == "import-retained" and args.html:
             from .transfer_preview_view import render_transfer
             print(render_transfer(result))

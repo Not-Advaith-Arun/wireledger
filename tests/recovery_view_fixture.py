@@ -1,0 +1,11 @@
+"""Actual constrained recovery previews expose metadata without mutating owned inputs."""
+from pathlib import Path
+import sys,json,subprocess,re
+from wireledger.ledger import initialize,load_private,load_public,append,verify,make_checkpoint
+from wireledger.retention import retain_checkpoint
+from wireledger.recovery_view import recovery_metadata
+root=Path(sys.argv[1]);w=root/'PRIVATE_LEDGER_PATH';initialize(w);private=load_private(w/'witness.key');public=load_public(w/'witness.pub');ledger=w/'observations.jsonl';append(ledger,private,{'host':'fictional.test','status':'error','error':'PRIVATE_DIAGNOSTIC'});store=root/'PRIVATE_STORE_PATH';retain_checkpoint(store,make_checkpoint(verify(ledger,public),private),public);valid=ledger.read_bytes();claims={p.name:p.read_bytes()for p in store.iterdir()if p.is_file()};base=[sys.executable,'-m','wireledger','recovery-preview',str(ledger),'--public-key',str(w/'witness.pub'),'--store',str(store)]
+for name,raw,action in [('tail',valid+b'{"PRIVATE_TAIL":','truncate-incomplete-tail'),('newline',valid[:-1],'append-missing-newline')]:
+ ledger.write_bytes(raw);native=subprocess.run(base,capture_output=True,text=True);assert native.returncode==0,native.stderr;plan=json.loads(native.stdout);html=subprocess.run(base+['--html'],capture_output=True,text=True);assert html.returncode==0,html.stderr;data=json.loads(re.search(r'<script id="report-data" type="application/json">(.*?)</script>',html.stdout,re.S).group(1));assert data==recovery_metadata(plan) and data['action']==action;assert all(secret not in html.stdout for secret in ['PRIVATE_LEDGER_PATH','PRIVATE_STORE_PATH','PRIVATE_DIAGNOSTIC','PRIVATE_TAIL','PRIVATE KEY']);(root/(name+'.html')).write_text(html.stdout);(root/(name+'.json')).write_text(json.dumps(data));assert ledger.read_bytes()==raw;assert claims=={p.name:p.read_bytes()for p in store.iterdir()if p.is_file()}
+ledger.write_bytes(valid+b'{"body":{}}');bad=subprocess.run(base+['--html'],capture_output=True,text=True);assert bad.returncode==1 and not bad.stdout;assert ledger.read_bytes()==valid+b'{"body":{}}'
+foreign=root/'foreign';initialize(foreign);ledger.write_bytes(valid[:-1]);bad=subprocess.run(base+['--public-key',str(foreign/'witness.pub'),'--html'],capture_output=True,text=True);assert bad.returncode==1 and not bad.stdout

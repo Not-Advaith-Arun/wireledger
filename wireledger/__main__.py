@@ -163,6 +163,8 @@ def main(argv=None):
         recovery.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         recovery.add_argument("--store", type=Path, action="append", required=True,
                               help="selected retained checkpoint store; repeat to check all selected stores")
+        if command == "recovery-preview":
+            recovery.add_argument("--html", action="store_true", help="Read-only metadata cards; downloaded JSON is not an apply plan")
         if command == "recovery-apply":
             recovery.add_argument("--plan", type=Path, required=True, help="previously reviewed recovery-preview JSON")
             recovery.add_argument("--evidence", type=Path, required=True, help="separate directory for exclusive original-byte evidence")
@@ -345,6 +347,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "recovery-preview" and args.html:
+            from .recovery_view import render_recovery
+            print(render_recovery(result))
         elif args.command == "compare-checkpoints" and args.html:
             from .checkpoint_pair_view import render_pair
             print(render_pair(result))

@@ -154,6 +154,7 @@ def main(argv=None):
         bundle.add_argument("--public-key", type=Path, required=True)
         if name == "import-retained":
             bundle.add_argument("input", type=Path, help="Checkpoint bundle; all signatures checked before per-file publication")
+            bundle.add_argument("--html",action="store_true",help="Read-only transfer preview cards; requires --preview")
             bundle.add_argument("--preview", action="store_true", help="Authenticate and report proposed claim counts/conflicts without publishing claims")
     for command in ("recovery-preview", "recovery-apply"):
         recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
@@ -202,6 +203,8 @@ def main(argv=None):
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
         elif args.command in ("export-retained", "import-retained"):
+            if args.command == "import-retained" and args.html and not args.preview:
+                raise ValueError("checkpoint import HTML requires --preview; no claims published")
             from .retention import export_bundle, retain_bundle
             from .ledger import parse, _read
             key = load_public(args.public_key)
@@ -341,6 +344,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "import-retained" and args.html:
+            from .transfer_preview_view import render_transfer
+            print(render_transfer(result))
         elif args.command == "compare-retained" and args.html:
             from .retained_comparison_view import render_retained_comparison
             print(render_retained_comparison(result))

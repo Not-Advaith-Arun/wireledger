@@ -123,11 +123,23 @@ def check_retained_history(directory, ledger, key):
     return _check_retained_records(directory, verify(ledger, key), key)
 
 
-def export_bundle(directory, key):
+def export_bundle(directory, key, *, counts=None):
+    """Export all claims or explicit record counts, keeping every conflicting head.
+
+    The unsigned bundle container never establishes completeness of its source store.
+    Every retained signature is checked even when only some counts are exported.
+    """
+    if counts is not None and (not isinstance(counts,list) or not 1<=len(counts)<=MAX_CHECKPOINTS or
+            any(type(count)is not int or count<0 for count in counts) or len(set(counts))!=len(counts)):
+        raise LedgerError("select1..1024 distinct nonnegative retained record counts")
     with _locked(directory) as directory:
         checkpoints = _read(directory, key)
     if not checkpoints:
         raise LedgerError("no retained claims to export")
+    if counts is not None:
+        if set(counts)-{cp["body"]["count"]for cp in checkpoints}:
+            raise LedgerError("selected record count has no retained claim; no partial bundle exported")
+        checkpoints=[cp for cp in checkpoints if cp["body"]["count"]in counts]
     return {"format": "wireledger.checkpoint-bundle.v1", "witness": public_id(key), "checkpoints": checkpoints}
 
 
@@ -163,7 +175,7 @@ def retain_bundle(directory, bundle, key, *, preview=False):
     return {"retained": not preview, "preview": preview, "witness": public_id(key), "imported_claims": len(incoming),
             "added_claims": added, "already_retained_claims": len(incoming) - added,
             "total_claims": len(existing) + added, "conflicting_heads": any(len(h) > 1 for h in heads.values()),
-            "scope": (("Preview only: no claims published or destination created. Existing store locking may create its lock file. Counts/conflicts describe the checked snapshot, not a reservation or authorization; a later import revalidates everything and may differ. " if preview else "") + "Every incoming/existing signature and capacity checked before claim publication against your supplied key. Each claim publishes atomically; the bundle is not a transaction. I/O failure may leave a valid partial subset: preserve the store and retry the exact bundle. Signed conflicts retained, never overwritten. No bundle authenticity, independent custody, ancestry, freshness or observer truth established.")}
+            "scope": (("Preview only: no claims published or destination created. Existing store locking may create its lock file. Counts/conflicts describe the checked snapshot, not a reservation or authorization; a later import revalidates everything and may differ. " if preview else "") + "Every incoming/existing signature and capacity checked before claim publication against your supplied key. Each claim publishes atomically; the bundle is not a transaction. I/O failure may leave a valid partial subset: preserve the store and retry the exact bundle. Signed conflicts retained, never overwritten. Selected bundles do not establish completeness of the origin store. No bundle authenticity, independent custody, ancestry, freshness or observer truth established.")}
 
 
 def _check_retained_records(directory, records, key):

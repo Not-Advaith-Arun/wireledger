@@ -153,6 +153,8 @@ def main(argv=None):
         bundle = sub.add_parser(name, help="Transfer signed retained claims; independently supplied key required, no custody/freshness guarantee")
         bundle.add_argument("--store", type=Path, required=True)
         bundle.add_argument("--public-key", type=Path, required=True)
+        if name == "export-retained":
+            bundle.add_argument("--count",type=int,action="append",help="Export explicit retained record counts; repeat for several, includes every conflicting head at each count. Omitted counts do not imply absence; unsigned bundles never prove store completeness.")
         if name == "import-retained":
             bundle.add_argument("input", type=Path, help="Checkpoint bundle; all signatures checked before per-file publication")
             bundle.add_argument("--html",action="store_true",help="Read-only transfer preview cards; requires --preview")
@@ -211,7 +213,7 @@ def main(argv=None):
             from .retention import export_bundle, retain_bundle
             from .ledger import parse, _read
             key = load_public(args.public_key)
-            result = (export_bundle(args.store, key) if args.command == "export-retained" else
+            result = (export_bundle(args.store, key, counts=args.count) if args.command == "export-retained" else
                       retain_bundle(args.store, parse(_read(args.input)), key, preview=args.preview))
             code = 2 if result.get("conflicting_heads") else 0
         elif args.command == "compare-retained":

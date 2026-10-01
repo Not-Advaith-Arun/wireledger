@@ -29,6 +29,7 @@ def main(argv=None):
                        help="total DNS/TCP/TLS network budget in seconds (0 < value <= 60)")
     collection = sub.add_parser("observe-policy", help="Collect each explicit endpoint/vantage once, sequentially, retaining signed failures; at most16 rows")
     collection.add_argument("directory", type=Path)
+    collection.add_argument("--html",action="store_true",help="Read-only normalized collection cards; requires --preview and never contacts endpoints")
     collection.add_argument("--preview",action="store_true",help="Normalize/validate policy and current public-key history without private-key access,network or append")
     collection.add_argument("--expected", type=Path, required=True)
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
@@ -201,6 +202,7 @@ def main(argv=None):
             result = {"sequence": record["body"]["sequence"], "observation": observation}
             code = 0 if observation["status"] == "verified" else 2
         elif args.command == "observe-policy":
+            if args.html and not args.preview:raise ValueError('collection HTML requires --preview; no collection attempted')
             from .collection import observe_policy, preview_policy
             from .ledger import parse, _read
             operation = preview_policy if args.preview else observe_policy
@@ -377,6 +379,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "observe-policy" and args.html:
+            from .collection_preview_view import render_collection
+            print(render_collection(result))
         elif args.command == "compare-bundles" and args.html:
             from .bundle_inspection_view import render_comparison
             print(render_comparison(result))

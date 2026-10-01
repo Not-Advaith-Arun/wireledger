@@ -149,6 +149,10 @@ def main(argv=None):
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
+    bundle_inspection=sub.add_parser("inspect-bundle",help="Authenticate detached bundle claims without a destination or history; no completeness/ancestry guarantee")
+    bundle_inspection.add_argument("input",type=Path)
+    bundle_inspection.add_argument("--public-key",type=Path,required=True)
+    bundle_inspection.add_argument("--html",action="store_true",help="Captured authenticated claim metadata only")
     for name in ("export-retained", "import-retained"):
         bundle = sub.add_parser(name, help="Transfer signed retained claims; independently supplied key required, no custody/freshness guarantee")
         bundle.add_argument("--store", type=Path, required=True)
@@ -207,6 +211,11 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command == "inspect-bundle":
+            from .retention import inspect_bundle
+            from .ledger import parse, _read
+            result=inspect_bundle(parse(_read(args.input)),load_public(args.public_key))
+            code=2 if result["conflicting_counts"]else 0
         elif args.command in ("export-retained", "import-retained"):
             if args.command == "import-retained" and args.html and not args.preview:
                 raise ValueError("checkpoint import HTML requires --preview; no claims published")
@@ -349,6 +358,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "inspect-bundle" and args.html:
+            from .bundle_inspection_view import render_bundle
+            print(render_bundle(result))
         elif args.command == "recovery-preview" and args.html:
             from .recovery_view import render_recovery
             print(render_recovery(result))

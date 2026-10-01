@@ -143,7 +143,7 @@ def export_bundle(directory, key, *, counts=None):
     return {"format": "wireledger.checkpoint-bundle.v1", "witness": public_id(key), "checkpoints": checkpoints}
 
 
-def retain_bundle(directory, bundle, key, *, preview=False):
+def _bundle_claims(bundle, key):
     if (not isinstance(bundle, dict) or set(bundle) != {"format", "witness", "checkpoints"}
             or bundle["format"] != "wireledger.checkpoint-bundle.v1" or bundle["witness"] != public_id(key)):
         raise LedgerError("bundle must match the independently supplied public key and supported format")
@@ -157,6 +157,24 @@ def retain_bundle(directory, bundle, key, *, preview=False):
         if name in prepared:
             raise LedgerError("bundle contains a duplicate checkpoint claim")
         prepared[name] = checkpoint
+    return prepared
+
+
+def inspect_bundle(bundle, key):
+    """Authenticate every detached claim without a destination or history read."""
+    prepared=_bundle_claims(bundle,key)
+    claims=[];heads={}
+    for checkpoint in prepared.values():
+        body=checkpoint["body"];heads.setdefault(body["count"],set()).add(body["head"])
+        claims.append({"count":body["count"],"head":body["head"],"sha256":hashlib.sha256(canonical(checkpoint)).hexdigest()})
+    return {"format":"wireledger.bundle-inspection.v1","witness":public_id(key),"claim_count":len(claims),"claims":claims,
+        "conflicting_counts":sorted(count for count,values in heads.items()if len(values)>1),
+        "scope":"Every detached claim signature checked against the independently supplied public key. No destination, retained store or ledger history read or changed. The bundle container is unsigned: no origin completeness/authenticity, custody, ancestry, freshness, rollback detection or observer truth established. Same-count conflicting heads need attention; unequal counts do not establish extension."}
+
+
+def retain_bundle(directory, bundle, key, *, preview=False):
+    prepared=_bundle_claims(bundle,key)
+    incoming=list(prepared.values())
     directory = Path(directory)
     absent = preview and not directory.exists() and not directory.is_symlink()
     with (nullcontext(directory) if absent else _locked(directory, create=not preview)) as directory:

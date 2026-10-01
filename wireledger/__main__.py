@@ -108,6 +108,7 @@ def main(argv=None):
     views.add_argument("--max-pairs", type=int, default=1000, help="Global pair-comparison budget, 1..10000")
     evidence = sub.add_parser("audit", help="verify signatures and independently audit captured certificates offline")
     evidence.add_argument("ledger", type=Path)
+    evidence.add_argument("--html",action="store_true",help="Captured independent audit metadata; omit certificate bodies and private diagnostics")
     evidence.add_argument("--public-key", type=Path, required=True)
     evidence.add_argument("--checkpoint", type=Path)
     evidence.add_argument("--ca-file", type=Path, required=True, help="independently trusted PEM CA bundle, never taken from the ledger")
@@ -379,6 +380,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "audit" and args.html:
+            from .audit_view import render_audit
+            print(render_audit(result))
         elif args.command == "observe-policy" and args.html:
             from .collection_preview_view import render_collection
             print(render_collection(result))

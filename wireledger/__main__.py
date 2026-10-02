@@ -183,6 +183,9 @@ def main(argv=None):
     bundle_comparison.add_argument("right",type=Path)
     bundle_comparison.add_argument("--public-key",type=Path,required=True)
     bundle_comparison.add_argument("--html",action="store_true")
+    bundle_picker=sub.add_parser("bundle-picker",help="Authenticate all supplied claims and prepare an offline signed-count picker; embeds full original signatures, preserving all conflicts at selected counts")
+    bundle_picker.add_argument("input",type=Path)
+    bundle_picker.add_argument("--public-key",type=Path,required=True)
     bundle_inspection=sub.add_parser("inspect-bundle",help="Authenticate detached bundle claims without a destination or history; no completeness/ancestry guarantee")
     bundle_inspection.add_argument("input",type=Path)
     bundle_inspection.add_argument("--public-key",type=Path,required=True)
@@ -286,6 +289,13 @@ def main(argv=None):
             from .ledger import parse, _read
             result=compare_bundles(parse(_read(args.left)),parse(_read(args.right)),load_public(args.public_key))
             code=2 if result["conflicting_counts"]else 0
+        elif args.command == "bundle-picker":
+            from .retention import inspect_bundle
+            from .ledger import parse,_read
+            from .bundle_inspection_view import render_bundle_picker
+            bundle=parse(_read(args.input));report=inspect_bundle(bundle,load_public(args.public_key))
+            print(render_bundle_picker(bundle,report))
+            return 2 if report['conflicting_counts']else 0
         elif args.command == "inspect-bundle":
             from .retention import inspect_bundle
             from .ledger import parse, _read

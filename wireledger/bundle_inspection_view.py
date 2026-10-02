@@ -28,3 +28,11 @@ def render_combined(bundle,report,input_claims):
         'Both complete input bundles authenticated against the same independently supplied public key. Identical signed bodies coalesced; distinct same-count heads are preserved with original signatures. Output order is first input then new claims from the second, not chronology or ancestry. Bundle containers are unsigned: no completeness, custody, freshness or history consistency is established. No store, history, private-key, import or network operation occurred. This page contains selected original signed claims for a separate explicit native import.',
         ['Signed record count','Claimed head','Signed claim digest'],rows,payload=bundle,
         summary=f"Combined {input_claims} supplied claims into {report['claim_count']} distinct signed bodies; {input_claims-report['claim_count']} repeated bodies coalesced. Same-count conflicts retained: {len(report['conflicting_counts'])}. Download report JSON is an importable bundle; conflicts still require attention.")
+
+
+def render_bundle_picker(bundle,report):
+    from pathlib import Path
+    rows=[{'group':'Conflicting count'if row['count']in report['conflicting_counts']else'Authenticated claim','cells':[row['count'],row['head'],row['sha256']]}for row in report['claims']]
+    return render_report('Wireledger detached claim picker',report['scope']+' Original signed claims are embedded by this explicit picker command. Choose record counts; every supplied conflicting head at each chosen count is kept. Downloaded subsets require separate native verification/import with an independently supplied key. No history, private key, retained store or network accessed.',
+        ['Signed record count','Claimed head','Signed claim digest'],rows,payload=bundle,
+        summary=f"All {report['claim_count']} signatures authenticated; {len(report['conflicting_counts'])} conflicting counts need attention. Choose counts explicitly; neither a subset nor unequal counts prove completeness, ancestry or freshness.",extra_script=Path(__file__).with_name('ui').joinpath('bundle_picker.js').read_text())

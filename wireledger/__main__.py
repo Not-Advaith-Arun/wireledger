@@ -47,11 +47,15 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "failures"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "compare-certificates", "failures"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         check.add_argument("--checkpoint", type=Path)
+        if command == "compare-certificates":
+            check.add_argument("--left-sequence",type=int,required=True)
+            check.add_argument("--right-sequence",type=int,required=True)
+            check.add_argument("--html",action="store_true")
         if command == "certificate-info":
             check.add_argument("--sequence", type=int, required=True)
             check.add_argument("--index", type=int, default=1, help="One-based captured certificate index, leaf first")
@@ -366,6 +370,9 @@ def main(argv=None):
                 from .inventory import failure_streaks
                 result = failure_streaks(records)
                 code = 2 if result["needs_attention"] else 0
+            elif args.command == "compare-certificates":
+                from .certificate_pair import compare_captured_certificates
+                result=compare_captured_certificates(records,args.left_sequence,args.right_sequence)
             elif args.command == "certificate-info":
                 from .chain_export import certificate_info
                 result = certificate_info(records,args.sequence,args.index)
@@ -446,6 +453,9 @@ def main(argv=None):
         elif args.command == "audit" and args.html:
             from .audit_view import render_audit
             print(render_audit(result))
+        elif args.command == "compare-certificates" and args.html:
+            from .certificate_pair import render_certificate_pair
+            print(render_certificate_pair(result))
         elif args.command == "select-policy" and args.html:
             from .policy_comparison import render_policy_selection
             print(render_policy_selection(result,selection_input_count))

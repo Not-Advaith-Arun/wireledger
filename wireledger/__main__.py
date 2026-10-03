@@ -27,6 +27,8 @@ def main(argv=None):
     probe.add_argument("--vantage", default="local")
     probe.add_argument("--timeout", type=float, default=5,
                        help="total DNS/TCP/TLS network budget in seconds (0 < value <= 60)")
+    policy_picker=sub.add_parser("policy-picker",help="Choose1..16 explicit normalized endpoint/vantage groups from fully validated unsigned intent; no collection")
+    policy_picker.add_argument("input",type=Path)
     policy_selection=sub.add_parser("select-policy",help="Export1..16 explicitly supplied endpoint/vantage groups from a fully validated unsigned policy; no collection")
     policy_selection.add_argument("input",type=Path)
     policy_selection.add_argument("--endpoint",nargs=3,action="append",required=True,metavar=("HOST","PORT","VANTAGE"))
@@ -237,6 +239,11 @@ def main(argv=None):
             record = append(args.directory / "observations.jsonl", key, observation)
             result = {"sequence": record["body"]["sequence"], "observation": observation}
             code = 0 if observation["status"] == "verified" else 2
+        elif args.command == "policy-picker":
+            from .policy_picker import policy_choices,render_policy_choices
+            from .ledger import parse,_read
+            print(render_policy_choices(policy_choices(parse(_read(args.input)))))
+            return 0
         elif args.command == "select-policy":
             from .policy_comparison import select_policy
             from .ledger import parse,_read

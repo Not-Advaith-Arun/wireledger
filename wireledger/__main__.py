@@ -47,15 +47,21 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "compare-certificates", "failures"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "compare-certificates", "certificate-picker", "failures"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         check.add_argument("--checkpoint", type=Path)
         if command == "compare-certificates":
-            check.add_argument("--left-sequence",type=int,required=True)
-            check.add_argument("--right-sequence",type=int,required=True)
+            check.add_argument("--left-sequence",type=int)
+            check.add_argument("--right-sequence",type=int)
+            check.add_argument("--selection",type=Path,help="Captured exact signed-history identity and explicit left/right sequences")
             check.add_argument("--html",action="store_true")
+        if command == "certificate-picker":
+            check.add_argument("--after-sequence",type=int,default=0)
+            check.add_argument("--limit",type=int,default=50)
+            check.add_argument("--selection",type=Path,help="Carry explicit choices across pages of this exact signed history")
+            check.add_argument("--json",action="store_true")
         if command == "certificate-info":
             check.add_argument("--sequence", type=int, required=True)
             check.add_argument("--index", type=int, default=1, help="One-based captured certificate index, leaf first")
@@ -370,8 +376,20 @@ def main(argv=None):
                 from .inventory import failure_streaks
                 result = failure_streaks(records)
                 code = 2 if result["needs_attention"] else 0
+            elif args.command == "certificate-picker":
+                from .certificate_selection import certificate_choices,render_certificate_choices
+                from .ledger import _read,parse
+                result=certificate_choices(records,result,after_sequence=args.after_sequence,limit=args.limit,selection=parse(_read(args.selection))if args.selection else None)
+                print(json.dumps(result,indent=2)if args.json else render_certificate_choices(result))
+                return 0
             elif args.command == "compare-certificates":
                 from .certificate_pair import compare_captured_certificates
+                if args.selection:
+                    if args.left_sequence is not None or args.right_sequence is not None:raise ValueError('select captured choices or both manual sequences, not both')
+                    from .certificate_selection import selected_pair
+                    from .ledger import _read,parse
+                    args.left_sequence,args.right_sequence=selected_pair(records,result,parse(_read(args.selection)),complete=True)
+                if args.left_sequence is None or args.right_sequence is None:raise ValueError('choose both explicit manual sequences or a complete captured selection')
                 result=compare_captured_certificates(records,args.left_sequence,args.right_sequence)
             elif args.command == "certificate-info":
                 from .chain_export import certificate_info

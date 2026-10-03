@@ -198,6 +198,7 @@ def main(argv=None):
     bundle_picker=sub.add_parser("bundle-picker",help="Authenticate all supplied claims and prepare an offline signed-count picker; embeds full original signatures, preserving all conflicts at selected counts")
     bundle_picker.add_argument("input",type=Path)
     bundle_picker.add_argument("--public-key",type=Path,required=True)
+    bundle_picker.add_argument("--choices",type=Path,help="Resume explicit signed counts only on the same fully authenticated complete bundle/key")
     bundle_inspection=sub.add_parser("inspect-bundle",help="Authenticate detached bundle claims without a destination or history; no completeness/ancestry guarantee")
     bundle_inspection.add_argument("input",type=Path)
     bundle_inspection.add_argument("--public-key",type=Path,required=True)
@@ -311,7 +312,7 @@ def main(argv=None):
             from .ledger import parse,_read
             from .bundle_inspection_view import render_bundle_picker
             bundle=parse(_read(args.input));report=inspect_bundle(bundle,load_public(args.public_key))
-            print(render_bundle_picker(bundle,report))
+            print(render_bundle_picker(bundle,report,parse(_read(args.choices))if args.choices else None))
             return 2 if report['conflicting_counts']else 0
         elif args.command == "inspect-bundle":
             from .retention import inspect_bundle

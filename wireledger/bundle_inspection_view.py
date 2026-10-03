@@ -30,9 +30,13 @@ def render_combined(bundle,report,input_claims):
         summary=f"Combined {input_claims} supplied claims into {report['claim_count']} distinct signed bodies; {input_claims-report['claim_count']} repeated bodies coalesced. Same-count conflicts retained: {len(report['conflicting_counts'])}. Download report JSON is an importable bundle; conflicts still require attention.")
 
 
-def render_bundle_picker(bundle,report):
+def render_bundle_picker(bundle,report,choices=None):
     from pathlib import Path
+    import json
+    from .bundle_choices import bundle_choices
+    selected=bundle_choices(bundle,report,choices)
+    captured='const capturedBundleChoices='+json.dumps(selected,ensure_ascii=True).replace('<','\\u003c').replace('&','\\u0026')+';\n'
     rows=[{'group':'Conflicting count'if row['count']in report['conflicting_counts']else'Authenticated claim','cells':[row['count'],row['head'],row['sha256']]}for row in report['claims']]
-    return render_report('Wireledger detached claim picker',report['scope']+' Original signed claims are embedded by this explicit picker command. Choose record counts; every supplied conflicting head at each chosen count is kept. Downloaded subsets require separate native verification/import with an independently supplied key. No history, private key, retained store or network accessed.',
+    return render_report('Wireledger detached claim picker',report['scope']+' Original signed claims are embedded by this explicit picker command. Saved count choices bind to this full canonical bundle and independently checked witness key; this hash is a consistency guard, not new authenticity or freshness evidence. Choose record counts; every supplied conflicting head at each chosen count is kept. Downloaded subsets require separate native verification/import with an independently supplied key. No history, private key, retained store or network accessed.',
         ['Signed record count','Claimed head','Signed claim digest'],rows,payload=bundle,
-        summary=f"All {report['claim_count']} signatures authenticated; {len(report['conflicting_counts'])} conflicting counts need attention. Choose counts explicitly; neither a subset nor unequal counts prove completeness, ancestry or freshness.",extra_script=Path(__file__).with_name('ui').joinpath('bundle_picker.js').read_text())
+        summary=f"All {report['claim_count']} signatures authenticated; {len(report['conflicting_counts'])} conflicting counts need attention. Choose counts explicitly; neither a subset nor unequal counts prove completeness, ancestry or freshness.",extra_script=captured+Path(__file__).with_name('ui').joinpath('bundle_picker.js').read_text())

@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-PROJECT = Path(__file__).resolve().parents[1].name
+PROJECT = 'wireledger'
 
 
 class ShowcaseWorkflow(unittest.TestCase):

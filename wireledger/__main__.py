@@ -106,6 +106,7 @@ def main(argv=None):
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
     coverage = sub.add_parser("coverage", help="Compare signed observations with an explicit expected endpoint/vantage manifest")
     coverage.add_argument("ledger", type=Path)
+    coverage.add_argument("--policy-picker", action="store_true", help="Explicit offline policy choices from reported expected groups, no collection; attention exit status retained")
     coverage.add_argument("--html", action="store_true", help="Offline explicit-policy coverage review; missing groups remain attention")
     coverage.add_argument("--public-key", type=Path, required=True)
     coverage.add_argument("--checkpoint", type=Path)
@@ -444,6 +445,13 @@ def main(argv=None):
                 from .ledger import _read, parse
                 result = collection_coverage(records, parse(_read(args.expected)), exact=args.exact, after_sequence=args.after_sequence, attention_only=args.attention_only)
                 code = 2 if result["needs_attention"] else 0
+                if args.policy_picker:
+                    if args.html: raise ValueError('choose coverage HTML or policy picker, not both')
+                    from .coverage_picker import coverage_choices, render_coverage_choices
+                    report = coverage_choices(result, {'witness': public_id(key), 'count': len(records), 'head': record_hash(records[-1]) if records else ZERO})
+                    print(render_coverage_choices(report))
+                    return code
+
             elif args.command == "endpoints":
                 from .inventory import endpoint_inventory, collection_policy
                 if args.html and args.policy:

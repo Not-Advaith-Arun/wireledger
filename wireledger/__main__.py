@@ -49,11 +49,17 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "certificate-batch", "policy-from-samples", "history-prefix", "compare-certificates", "certificate-picker", "failures"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "certificate-batch", "policy-from-samples", "history-prefix", "compare-certificates", "certificate-picker", "failures", "failure-details"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         check.add_argument("--checkpoint", type=Path)
+        if command == "failure-details":
+            check.add_argument("--host", required=True, help="Exact signed host, no normalization")
+            check.add_argument("--port", type=int, required=True)
+            check.add_argument("--vantage", required=True, help="Exact signed vantage label")
+            check.add_argument("--limit", type=int, default=50, help="Newest1..1000 current-streak samples; complete history/group still inspected")
+            check.add_argument("--html", action="store_true")
         if command == "compare-certificates":
             check.add_argument("--left-sequence",type=int)
             check.add_argument("--right-sequence",type=int)
@@ -397,6 +403,11 @@ def main(argv=None):
                 from .inventory import failure_streaks
                 result = failure_streaks(records)
                 code = 2 if result["needs_attention"] else 0
+            elif args.command == "failure-details":
+                from .failure_details import failure_details, render_failure_details
+                result = failure_details(records, args.host, args.port, args.vantage, limit=args.limit)
+                print(render_failure_details(result) if args.html else json.dumps(result, indent=2))
+                return 2 if result['current_streak_length'] else 0
             elif args.command == "certificate-picker":
                 from .certificate_selection import certificate_choices,render_certificate_choices
                 from .ledger import _read,parse

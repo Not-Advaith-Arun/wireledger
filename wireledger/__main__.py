@@ -16,6 +16,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     from .showcase import arguments as showcase_arguments
     showcase_arguments(sub.add_parser("showcase", help="generate an interactive offline product sample"))
+    verification_set = sub.add_parser("verify-set",help="Independently verify1..8 explicit retained history views and optional trusted checkpoints; failed counts remain unknown, no cross-view consistency claim")
+    verification_set.add_argument("manifest",type=Path)
+    verification_set.add_argument("--html",action="store_true")
     init = sub.add_parser("init", help="create a new local witness, refusing existing directories")
     init.add_argument("directory", type=Path)
     probe = sub.add_parser("observe", help="perform one verified TLS handshake and append its observation")
@@ -285,6 +288,12 @@ def main(argv=None):
             result = operation(args.directory, parse(_read(args.expected)), connect_ip=args.connect_ip,
                                     cafile=args.ca_file, timeout=args.timeout)
             code = 0 if args.preview or result["all_verified"] else 2
+        elif args.command == "verify-set":
+            from .verification_set import verify_set,render_verification_set
+            from .ledger import parse,_read
+            result=verify_set(parse(_read(args.manifest)),args.manifest.parent)
+            print(render_verification_set(result)if args.html else json.dumps(result,indent=2))
+            return 0 if result['all_verified']else 2
         elif args.command == "checkpoint":
             key = load_private(args.directory / "witness.key")
             records = verify(args.directory / "observations.jsonl", key.public_key())

@@ -19,6 +19,9 @@ def main(argv=None):
     verification_set = sub.add_parser("verify-set",help="Independently verify1..8 explicit retained history views and optional trusted checkpoints; failed counts remain unknown, no cross-view consistency claim")
     verification_set.add_argument("manifest",type=Path)
     verification_set.add_argument("--html",action="store_true")
+    comparison_set = sub.add_parser("compare-set",help="Authenticate2..8explicit retained views once and compare all same-key chain prefixes/forks; failed views remain unknown")
+    comparison_set.add_argument("manifest",type=Path)
+    comparison_set.add_argument("--html",action="store_true")
     init = sub.add_parser("init", help="create a new local witness, refusing existing directories")
     init.add_argument("directory", type=Path)
     probe = sub.add_parser("observe", help="perform one verified TLS handshake and append its observation")
@@ -294,6 +297,12 @@ def main(argv=None):
             result=verify_set(parse(_read(args.manifest)),args.manifest.parent)
             print(render_verification_set(result)if args.html else json.dumps(result,indent=2))
             return 0 if result['all_verified']else 2
+        elif args.command == "compare-set":
+            from .verification_set import compare_set,render_comparison_set
+            from .ledger import parse,_read
+            result=compare_set(parse(_read(args.manifest)),args.manifest.parent)
+            print(render_comparison_set(result)if args.html else json.dumps(result,indent=2))
+            return 0 if result['all_verified']and not result['same_key_divergence_found']else 2
         elif args.command == "checkpoint":
             key = load_private(args.directory / "witness.key")
             records = verify(args.directory / "observations.jsonl", key.public_key())

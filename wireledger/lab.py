@@ -13,9 +13,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from .ledger import LedgerError, append, canonical, initialize, load_private, make_checkpoint, verify, verify_records
-from .probe import changes, observe
+from .ledger import (LedgerError, append, canonical, compare_checkpoints, compare_verified_histories,
+                     initialize, load_private, make_checkpoint, verify, verify_records)
+from .probe import changes, compare, observe
 from .evidence import audit, load_trust
+from .timeline import timeline
 
 
 def certificates(directory):
@@ -56,12 +58,12 @@ def certificates(directory):
 
 
 @contextmanager
-def tls_server(cert, key, *, port=0):
+def tls_server(cert, key, *, port=0, host="127.0.0.1"):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
-    listener = socket.socket()
+    listener = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", port))
+    listener.bind((host, port))
     listener.listen(4)
     listener.settimeout(0.1)
     stop = threading.Event()
@@ -99,6 +101,10 @@ def demo():
         initialize(state)
         key = load_private(state / "witness.key")
         ledger = state / "observations.jsonl"
+        other = root / "second-witness"
+        initialize(other)
+        other_key = load_private(other / "witness.key")
+        other_ledger = other / "observations.jsonl"
         port = 0
         for cert, private in pairs:
             with tls_server(cert, private, port=port) as bound:
@@ -107,11 +113,27 @@ def demo():
                 if observation["status"] != "verified":
                     raise LedgerError("local TLS lab verification failed: " + str(observation))
                 append(ledger, key, observation)
+                second = observe("localhost", port, connect_ip="127.0.0.1", cafile=str(ca), vantage="loopback-view-two")
+                if second["status"] != "verified":
+                    raise LedgerError("second loopback view failed")
+                append(other_ledger, other_key, second)
         records = verify(ledger, key.public_key())
         offline_audit = audit(records, load_trust(ca))
         if not offline_audit["ok"]:
             raise LedgerError("offline lab certificate audit failed: " + str(offline_audit))
         checkpoint = make_checkpoint(records, key)
+        other_records = verify(other_ledger, other_key.public_key())
+        other_checkpoint = make_checkpoint(other_records, other_key)
+        old_records = verify_records(canonical(records[0]) + b"\n", key.public_key())
+        old_checkpoint = make_checkpoint(old_records, key)
+        # Deliberately create a second, validly signed history using the SAME
+        # disposable witness key. This is distinct from two independent observers.
+        fork = root / "fork.jsonl"
+        fork.write_bytes(canonical(records[0]) + b"\n")
+        append(fork, key, {**records[1]["body"]["observation"], "vantage": "deliberate-fork"})
+        append(fork, key, records[2]["body"]["observation"])
+        fork_records = verify(fork, key.public_key())
+        fork_checkpoint = make_checkpoint(fork_records, key)
         tampered = ledger.read_bytes().replace(b"loopback-lab", b"tampered-lab", 1)
         detected = {}
         for label, data, anchor in (
@@ -126,4 +148,12 @@ def demo():
         return {"network": "loopback only", "observations": len(records), "events": changes(records),
                 "detected": detected, "temporary_keys_removed": True,
                 "offline_certificate_audit": offline_audit,
+                "witness_views": {"observations": [len(records), len(other_records)],
+                                  "comparisons": compare(records, other_records),
+                                  "checkpoints": compare_checkpoints(checkpoint, other_checkpoint, key.public_key(), other_key.public_key())},
+                "old_prefix": {"checkpoints": compare_checkpoints(old_checkpoint, checkpoint, key.public_key(), key.public_key()),
+                               "history": compare_verified_histories(old_records, records, key.public_key(), key.public_key())},
+                "signed_fork": {"checkpoints": compare_checkpoints(checkpoint, fork_checkpoint, key.public_key(), key.public_key()),
+                                "history": compare_verified_histories(records, fork_records, key.public_key(), key.public_key())},
+                "timeline": timeline(records, at_observed_time=True),
                 "note": "Certificate changes alone do not establish an attack."}

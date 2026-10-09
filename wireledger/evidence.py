@@ -12,7 +12,8 @@ from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
 
-FORMAT = "wireledger.tls-evidence.v1"
+LEGACY_FORMAT = "wireledger.tls-evidence.v1"
+FORMAT = "wireledger.tls-evidence.v2"
 MAX_CERT_BYTES = 64 * 1024
 MAX_CHAIN = 16
 MAX_CA_FILE = 4 * 1024 * 1024
@@ -96,12 +97,15 @@ def parse_time(value):
 def validate_evidence(observation):
     """Validate captured certificate metadata; signed text alone is not a certificate."""
     evidence = observation.get("evidence")
-    if not isinstance(evidence, dict) or set(evidence) != {
-        "format", "chain_der", "chain_capture", "loaded_ca_set_sha256", "runtime"
-    }:
+    fields = {"format", "chain_der", "chain_capture", "loaded_ca_set_sha256", "runtime"}
+    if not isinstance(evidence, dict):
         raise ValueError("invalid certificate evidence fields")
-    if evidence["format"] != FORMAT:
+    if evidence.get("format") == FORMAT:
+        fields |= {"verifier_policy", "resolution"}
+    elif evidence.get("format") != LEGACY_FORMAT:
         raise ValueError("unsupported certificate evidence format")
+    if set(evidence) != fields:
+        raise ValueError("invalid certificate evidence fields")
     if evidence["chain_capture"] not in ("verified-chain", "leaf-only"):
         raise ValueError("unsupported chain capture method")
     if not isinstance(evidence["loaded_ca_set_sha256"], str) or not HEX.fullmatch(evidence["loaded_ca_set_sha256"]):
@@ -118,6 +122,11 @@ def validate_evidence(observation):
     if type(observation.get("port")) is not int or not 1 <= observation["port"] <= 65535:
         raise ValueError("invalid observation port")
     parse_time(observation.get("observed_at"))
+    if evidence["format"] == FORMAT:
+        from .provenance import validate_provenance
+        validate_provenance(observation)
+    from .provenance import validate_network_attempt
+    validate_network_attempt(observation)
     chain = decode_chain(evidence["chain_der"])
     if evidence["chain_capture"] == "leaf-only" and len(chain) != 1:
         raise ValueError("leaf-only evidence has multiple certificates")
@@ -171,12 +180,14 @@ def audit(records, roots, *, at_observed_time=False, now=None):
                 parsed = [x509.load_der_x509_certificate(der) for der in chain]
                 verified = verifier.verify(parsed[0], parsed[1:])
                 row.update(status="passed", verified_chain_length=len(verified),
-                           captured_ca_set_matches_audit_set=observation["evidence"]["loaded_ca_set_sha256"] == trusted_set)
+                           captured_ca_set_matches_audit_set=observation["evidence"]["loaded_ca_set_sha256"] == trusted_set,
+                           observer_policy_recorded=observation["evidence"]["format"] == FORMAT)
             except (ValueError, TypeError, VerificationError, x509.UnsupportedGeneralNameType) as exc:
                 row.update(status="failed", detail=str(exc))
         rows.append(row)
     return {"ok": bool(rows) and all(row["status"] == "passed" for row in rows),
             "audit_ca_set_sha256": trusted_set,
             "time_policy": "observer-asserted-time" if at_observed_time else "current-time",
+            "verifier_policy": "independent-pyca-server-verifier; not a replay of the observer's OpenSSL policy",
             "results": rows,
             "scope": "Offline certificate path, hostname, validity and metadata checks. No proof of handshake occurrence, trusted timestamp, revocation status, or absence of compromise."}

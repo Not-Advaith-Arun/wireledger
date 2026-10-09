@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -133,21 +134,77 @@ def verify_records(raw, public_key, checkpoint=None):
         previous = record_hash(record)
         records.append(record)
     if checkpoint is not None:
-        if not isinstance(checkpoint, dict) or set(checkpoint) != {"body", "signature"}:
-            raise LedgerError("invalid checkpoint envelope")
-        body = checkpoint["body"]
-        if not isinstance(body, dict) or set(body) != {"format", "count", "head", "witness"}:
-            raise LedgerError("invalid checkpoint body")
-        _verify_signature(public_key, checkpoint["signature"], CHECKPOINT_DOMAIN + canonical(body))
+        body = verify_checkpoint(checkpoint, public_key)
         count = body["count"]
-        if body["format"] != "wireledger.checkpoint.v1" or body["witness"] != public_id(public_key):
-            raise LedgerError("wrong checkpoint format or identity")
-        if type(count) is not int or count < 0 or count > len(records):
+        if count > len(records):
             raise LedgerError("history shorter than checkpoint")
         head = record_hash(records[count - 1]) if count else ZERO
         if body["head"] != head:
             raise LedgerError("history diverges from checkpoint")
     return records
+
+
+def verify_checkpoint(checkpoint, public_key):
+    """Check a checkpoint signature/shape, without claiming chain ancestry."""
+    if not isinstance(checkpoint, dict) or set(checkpoint) != {"body", "signature"}:
+        raise LedgerError("invalid checkpoint envelope")
+    body = checkpoint["body"]
+    if not isinstance(body, dict) or set(body) != {"format", "count", "head", "witness"}:
+        raise LedgerError("invalid checkpoint body")
+    if body["format"] != "wireledger.checkpoint.v1" or body["witness"] != public_id(public_key):
+        raise LedgerError("wrong checkpoint format or identity")
+    if type(body["count"]) is not int or not 0 <= body["count"] <= 2**63 - 1:
+        raise LedgerError("invalid checkpoint count")
+    if not isinstance(body["head"], str) or not re.fullmatch(r"[0-9a-f]{64}", body["head"]):
+        raise LedgerError("invalid checkpoint head")
+    if body["count"] == 0 and body["head"] != ZERO:
+        raise LedgerError("nonempty head on empty checkpoint")
+    _verify_signature(public_key, checkpoint["signature"], CHECKPOINT_DOMAIN + canonical(body))
+    return body
+
+
+def read_checkpoint(path):
+    """Load a bounded checkpoint; the caller must verify it with pinned trust."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise LedgerError("checkpoint must be a regular non-symlink file")
+    with path.open("rb") as handle:
+        raw = handle.read(4097)
+    if len(raw) > 4096:
+        raise LedgerError("checkpoint exceeds 4 KiB size limit")
+    return parse(raw)
+
+
+def compare_checkpoints(left, right, left_key, right_key):
+    """Detect incompatible same-length claims; unequal counts need histories."""
+    one, two = verify_checkpoint(left, left_key), verify_checkpoint(right, right_key)
+    if one["witness"] != two["witness"]:
+        relation = "independent-witnesses"
+    elif one["count"] != two["count"]:
+        relation = "ancestry-unproven"
+    elif one["head"] != two["head"]:
+        relation = "conflicting-heads"
+    else:
+        relation = "identical"
+    return {"relation": relation, "left": one, "right": two,
+            "scope": "Signed checkpoint claims only. Unequal counts do not prove a prefix or freshness."}
+
+
+def compare_verified_histories(left, right, left_key, right_key):
+    """Compare histories after the caller has verified both with pinned keys."""
+    result = {"left_count": len(left), "right_count": len(right)}
+    if public_id(left_key) != public_id(right_key):
+        result["relation"] = "independent-witnesses"
+    else:
+        for index, (one, two) in enumerate(zip(left, right), 1):
+            if record_hash(one) != record_hash(two):
+                result.update(relation="divergent", first_divergence=index)
+                break
+        else:
+            result["relation"] = ("identical" if len(left) == len(right) else
+                                  "left-prefix" if len(left) < len(right) else "right-prefix")
+    result["scope"] = "History consistency only; a valid prefix does not establish freshness."
+    return result
 
 
 def verify(path, public_key, checkpoint=None):
@@ -158,6 +215,21 @@ def append(path, key, observation):
     """Advisory locking serializes cooperating local writers on Unix."""
     if not isinstance(observation, dict):
         raise LedgerError("observation must be an object")
+    # json.dumps coerces non-string keys, whose order can change after parsing.
+    # Reject them before opening the ledger rather than signing unreadable data.
+    pending, seen = [observation], set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, (dict, list, tuple)):
+            if id(value) in seen:
+                continue  # canonical() below rejects circular containers.
+            seen.add(id(value))
+            if isinstance(value, dict):
+                if any(not isinstance(name, str) for name in value):
+                    raise LedgerError("observation object keys must be strings")
+                pending.extend(value.values())
+            else:
+                pending.extend(value)
     # Fail before opening the ledger if the observation cannot be represented.
     canonical(observation)
     fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)

@@ -54,6 +54,23 @@ def main(argv=None):
     anchors.add_argument("right", type=Path)
     anchors.add_argument("--left-key", type=Path, required=True)
     anchors.add_argument("--right-key", type=Path, required=True)
+    retain = sub.add_parser("retain-checkpoint", help="keep an authenticated checkpoint in an independent local directory")
+    retain.add_argument("checkpoint", type=Path)
+    retain.add_argument("--store", type=Path, required=True)
+    retain.add_argument("--public-key", type=Path, required=True)
+    retained = sub.add_parser("check-retained", help="check a signed history against every independently retained checkpoint")
+    retained.add_argument("ledger", type=Path)
+    retained.add_argument("--store", type=Path, required=True)
+    retained.add_argument("--public-key", type=Path, required=True)
+    for command in ("recovery-preview", "recovery-apply"):
+        recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
+        recovery.add_argument("ledger", type=Path)
+        recovery.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
+        recovery.add_argument("--store", type=Path, action="append", required=True,
+                              help="selected retained checkpoint store; repeat to check all selected stores")
+        if command == "recovery-apply":
+            recovery.add_argument("--plan", type=Path, required=True, help="previously reviewed recovery-preview JSON")
+            recovery.add_argument("--evidence", type=Path, required=True, help="separate directory for exclusive original-byte evidence")
     sub.add_parser("demo", help="loopback-only certificate rotation and tamper detection demonstration")
     args = parser.parse_args(argv)
     try:
@@ -85,6 +102,22 @@ def main(argv=None):
             result = compare_checkpoints(read_checkpoint(args.left), read_checkpoint(args.right),
                                          load_public(args.left_key), load_public(args.right_key))
             code = 2 if result["relation"] == "conflicting-heads" else 0
+        elif args.command == "retain-checkpoint":
+            from .retention import retain_checkpoint
+            result = retain_checkpoint(args.store, read_checkpoint(args.checkpoint), load_public(args.public_key))
+            code = 2 if result["conflicting_heads"] else 0
+        elif args.command == "check-retained":
+            from .retention import check_retained_history
+            result = check_retained_history(args.store, args.ledger, load_public(args.public_key))
+            code = 0 if result["ok"] else 2
+        elif args.command == "recovery-preview":
+            from .recovery import recovery_preview
+            result = recovery_preview(args.ledger, load_public(args.public_key), args.store)
+        elif args.command == "recovery-apply":
+            from .ledger import _read, parse
+            from .recovery import recovery_apply
+            result = recovery_apply(args.ledger, load_public(args.public_key), args.store,
+                                    parse(_read(args.plan)), args.evidence, plan_path=args.plan)
         elif args.command == "compare":
             histories, keys = [], []
             for name in ("left", "right"):

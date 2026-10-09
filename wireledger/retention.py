@@ -1,0 +1,135 @@
+"""Bounded, independently retained public checkpoints. No transport or freshness."""
+
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+import tempfile
+
+from .ledger import (LedgerError, ZERO, canonical, compare_checkpoints, public_id,
+                     read_checkpoint, record_hash, verify, verify_checkpoint)
+
+MAX_CHECKPOINTS = 1024
+_NAME = re.compile(r"anchor-([0-9a-f]{64})\.json\Z")
+_PENDING = re.compile(r"\.pending-anchor-[a-z0-9_]+\Z")
+_LOCK = ".wireledger-checkpoints.lock"
+
+
+def _sync_directory(directory):
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _locked(directory, *, create=False, protected_inodes=None):
+    directory = Path(directory)
+    if create:
+        directory.mkdir(mode=0o700, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise LedgerError("checkpoint store must be a non-symlink directory")
+    fd = os.open(directory / _LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a+b") as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise LedgerError("checkpoint lock must be a regular file")
+        if protected_inodes is not None:
+            identity = (info.st_dev, info.st_ino)
+            if identity in protected_inodes or info.st_nlink != 1:
+                raise LedgerError("checkpoint lock aliases another protected inode")
+            protected_inodes.add(identity)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield directory
+
+
+def _read(directory, key):
+    checkpoints = []
+    # Iterate with an explicit bound rather than reading an unlimited directory.
+    with os.scandir(directory) as entries:
+        pending = 0
+        for entry in entries:
+            if entry.name == _LOCK:
+                continue
+            if _PENDING.fullmatch(entry.name):
+                pending += 1
+                if pending > MAX_CHECKPOINTS or not entry.is_file(follow_symlinks=False):
+                    raise LedgerError("invalid or excessive incomplete checkpoint writes")
+                continue
+            match = _NAME.fullmatch(entry.name)
+            if match is None or not entry.is_file(follow_symlinks=False):
+                raise LedgerError("unexpected entry in checkpoint store")
+            if len(checkpoints) >= MAX_CHECKPOINTS:
+                raise LedgerError("checkpoint store exceeds 1024 claims")
+            checkpoint = read_checkpoint(entry.path)
+            verify_checkpoint(checkpoint, key)
+            if hashlib.sha256(canonical(checkpoint["body"])).hexdigest() != match[1]:
+                raise LedgerError("checkpoint filename disagrees with signed content")
+            checkpoints.append(checkpoint)
+    return sorted(checkpoints, key=lambda item: (item["body"]["count"], item["body"]["head"]))
+
+
+def retain_checkpoint(directory, checkpoint, key):
+    """Retain one authenticated claim, including a conflicting signed claim."""
+    body = verify_checkpoint(checkpoint, key)  # fail before any filesystem mutation
+    encoded = canonical(checkpoint)
+    name = "anchor-" + hashlib.sha256(canonical(body)).hexdigest() + ".json"
+    with _locked(directory, create=True) as directory:
+        checkpoints = _read(directory, key)
+        relations = [compare_checkpoints(existing, checkpoint, key, key)["relation"]
+                     for existing in checkpoints]
+        destination = directory / name
+        duplicate = "identical" in relations
+        if not duplicate:
+            if len(checkpoints) >= MAX_CHECKPOINTS:
+                raise LedgerError("checkpoint store is full; existing claims are preserved")
+            fd, temporary = tempfile.mkstemp(prefix=".pending-anchor-", dir=directory)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(encoded + b"\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.link(temporary, destination, follow_symlinks=False)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        else:
+            # Retrying after uncertain publication also retries durability work.
+            fd = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        _sync_directory(directory)
+        _sync_directory(directory.parent)
+        return {"retained": True, "already_retained": duplicate,
+                "witness": body["witness"], "count": len(checkpoints) + (not duplicate),
+                "checkpoint_file": str(destination),
+                "conflicting_heads": "conflicting-heads" in relations,
+                "ancestry_unproven": "ancestry-unproven" in relations,
+                "scope": "Locally retained signed claims. Store rollback, freshness and observer truth are not established."}
+
+
+def check_retained_history(directory, ledger, key):
+    """Authenticate a history, then compare every retained signed prefix claim."""
+    records = verify(ledger, key)
+    with _locked(directory) as directory:
+        checkpoints = _read(directory, key)
+    if not checkpoints:
+        raise LedgerError("checkpoint store contains no retained claims")
+    results = []
+    for checkpoint in checkpoints:
+        body = checkpoint["body"]
+        count = body["count"]
+        if count > len(records):
+            relation = "shorter-than-retained"
+        else:
+            head = record_hash(records[count - 1]) if count else ZERO
+            relation = "consistent-prefix" if head == body["head"] else "divergent"
+        results.append({"count": count, "head": body["head"], "relation": relation})
+    return {"ok": all(row["relation"] == "consistent-prefix" for row in results),
+            "witness": public_id(key), "history_count": len(records), "checkpoints": results,
+            "scope": "Authenticated history against locally retained claims; consistency does not prove freshness or truthful observations."}

@@ -23,3 +23,36 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue(report["offline_certificate_audit"]["ok"])
         self.assertEqual(report["signed_fork"]["history"]["relation"], "divergent")
         self.assertEqual(report["old_prefix"]["history"]["relation"], "left-prefix")
+
+    def test_observe_audit_retain_recover_and_reject_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "anchors"
+            self.cli("init", state)
+            ca, variants = certificates(root)
+            cert, private = variants[0]
+            public, ledger = state / "witness.pub", state / "observations.jsonl"
+            with tls_server(cert, private) as port:
+                self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
+                         "--ca-file", ca, "--timeout", "3")
+            self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca)["ok"])
+            timeline = self.cli("timeline", ledger, "--public-key", public, "--json")
+            self.assertTrue(timeline)
+            checkpoint = root / "checkpoint.json"
+            self.cli("checkpoint", state, checkpoint)
+            self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+            original = ledger.read_bytes()
+            ledger.write_bytes(original + b'{"body":')
+            damaged = ledger.read_bytes()
+            plan = root / "plan.json"
+            preview = self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)
+            plan.write_text(json.dumps(preview))
+            self.assertEqual(ledger.read_bytes(), damaged)
+            evidence = root / "evidence"
+            self.cli("recovery-apply", ledger, "--public-key", public, "--store", retained,
+                     "--plan", plan, "--evidence", evidence)
+            self.assertEqual(ledger.read_bytes(), original)
+            self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
+            ledger.write_bytes(original.replace(b"localhost", b"tampered!", 1))
+            self.cli("verify", ledger, "--public-key", public, expected=1)
+            self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)

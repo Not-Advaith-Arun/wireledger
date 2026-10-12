@@ -209,3 +209,38 @@ class EndToEndTests(unittest.TestCase):
             append(ledger, key, {**sample, "vantage": "clock-unknown", "observed_at": "not-a-time"})
             unknown = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)
             self.assertEqual(next(r for r in unknown["results"] if r["vantage"] == "clock-unknown")["sampling_state"], "unknown-time")
+
+
+    def test_recovery_stale_bytes_are_refused_and_exact_retry_keeps_original_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, retained = root / "witness", root / "retained"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            append(ledger, key, {"host":"fixture.test", "port":443, "vantage":"local", "status":"error", "observed_at":"2026-10-12T00:00:00Z"})
+            checkpoint = root / "checkpoint.json"
+            self.cli("checkpoint", state, checkpoint)
+            self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+            valid = ledger.read_bytes()
+            ledger.write_bytes(valid + b'{"body":')
+            damaged = ledger.read_bytes()
+            plan = root / "reviewed.json"
+            plan.write_text(json.dumps(self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained)))
+            ledger.write_bytes(damaged + b'{')
+            changed = ledger.read_bytes()
+            evidence = root / "evidence"
+            args = ("recovery-apply", ledger, "--public-key", public, "--store", retained, "--plan", plan, "--evidence", evidence)
+            self.cli(*args, expected=1)
+            self.assertEqual(ledger.read_bytes(), changed)
+            self.assertFalse(evidence.exists())
+            ledger.write_bytes(damaged)
+            recovered = self.cli(*args)
+            self.assertFalse(recovered["already_recovered"])
+            self.assertEqual(ledger.read_bytes(), valid)
+            self.assertEqual((evidence / "original.jsonl").read_bytes(), damaged)
+            evidence_bytes = {p.name:p.read_bytes() for p in evidence.iterdir()}
+            retried = self.cli(*args)
+            self.assertTrue(retried["already_recovered"])
+            self.assertEqual({p.name:p.read_bytes() for p in evidence.iterdir()}, evidence_bytes)
+            self.assertEqual(ledger.read_bytes(), valid)

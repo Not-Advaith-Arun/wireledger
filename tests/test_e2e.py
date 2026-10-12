@@ -181,3 +181,31 @@ class EndToEndTests(unittest.TestCase):
             self.cli("endpoints", ledger, "--public-key", public, expected=1)
             self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test", expected=1)
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)
+
+
+    def test_expiry_distinguishes_leaf_windows_observer_age_and_latest_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "witness"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            sample = {"host": "fixture.test", "port": 443, "vantage": "local", "status": "verified",
+                      "observed_at": "2026-10-12T13:00:00Z", "not_before": "2026-10-12T13:00:00Z", "not_after": "2026-10-12T14:00:00Z",
+                      "certificate_sha256": "a" * 64, "spki_sha256": "b" * 64}
+            append(ledger, key, sample)
+            original = ledger.read_bytes()
+            future = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T12:00:00Z", expected=2)["results"][0]
+            self.assertEqual(future["certificate_window"], "not-yet-valid")
+            self.assertEqual(future["sampling_state"], "future-sample")
+            expired = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T15:00:00Z", "--max-age-seconds", "3600", expected=2)["results"][0]
+            self.assertEqual(expired["certificate_window"], "expired")
+            self.assertEqual(expired["sampling_state"], "stale-sample")
+            self.assertEqual(ledger.read_bytes(), original)
+            append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error", "observed_at": "2026-10-12T13:30:00Z"})
+            last = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)["results"][0]
+            self.assertEqual(last["certificate_window"], "unavailable")
+            self.assertIsNone(last["not_after"])
+            self.assertEqual(last["sequence"], 2)
+            append(ledger, key, {**sample, "vantage": "clock-unknown", "observed_at": "not-a-time"})
+            unknown = self.cli("expiry", ledger, "--public-key", public, "--as-of", "2026-10-12T13:30:00Z", expected=2)
+            self.assertEqual(next(r for r in unknown["results"] if r["vantage"] == "clock-unknown")["sampling_state"], "unknown-time")

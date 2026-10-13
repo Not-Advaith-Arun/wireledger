@@ -455,6 +455,40 @@ class EndToEndTests(unittest.TestCase):
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
 
+    def test_continuity_threshold_offsets_and_missing_times_never_invent_coverage(self):
+        # Signed CLI observations exercise the critical observer-time calculation,
+        # including exact thresholds and missing-time breaks in sequence order.
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "witness"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            sample = {"host":"fixture.test", "port":443, "vantage":"local", "status":"verified",
+                      "certificate_sha256":"a"*64, "spki_sha256":"b"*64}
+            for instant in ("2026-10-13T12:00:00+05:30", "2026-10-13T06:30:00Z", "2026-10-13T06:31:00Z"):
+                append(ledger,key,{**sample,"observed_at":instant})
+            args = ("continuity",ledger,"--public-key",public,"--max-gap-seconds","60")
+            boundary = self.cli(*args,"--as-of","2026-10-13T06:32:00Z")
+            row = boundary["results"][0]
+            self.assertEqual(row["gaps"],[])
+            self.assertEqual(row["clock_reversals"],[])
+            self.assertEqual((row["age_seconds"],row["sampling_state"]),(60,"within-observer-threshold"))
+            self.assertFalse(boundary["needs_attention"])
+            stale = self.cli(*args,"--as-of","2026-10-13T06:32:00.001Z",expected=2)["results"][0]
+            self.assertAlmostEqual(stale["age_seconds"],60.001)
+            self.assertEqual(stale["sampling_state"],"stale-sample")
+            append(ledger,key,{**sample,"observed_at":"unknown"})
+            append(ledger,key,{**sample,"observed_at":"2026-10-13T07:00:00Z"})
+            interrupted = self.cli(*args,"--as-of","2026-10-13T07:00:00Z",expected=2)["results"][0]
+            self.assertEqual(interrupted["unavailable_times"],[4])
+            self.assertEqual(interrupted["gaps"],[],"Unknown time must break adjacency rather than invent a timed gap")
+            self.assertEqual(interrupted["latest_sequence"],5)
+            append(ledger,key,{"host":"fixture.test","port":443,"vantage":"local","status":"error","observed_at":"2026-10-13T07:00:01Z"})
+            saved = ledger.read_bytes()
+            failed = self.cli(*args,"--as-of","2026-10-13T07:00:01Z",expected=2)["results"][0]
+            self.assertEqual((failed["latest_sequence"],failed["latest_status"]),(6,"error"))
+            self.assertEqual(ledger.read_bytes(),saved)
+
     def test_verified_timeline_csv_preserves_selected_page_and_literal_text(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "witness"

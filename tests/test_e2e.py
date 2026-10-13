@@ -488,6 +488,53 @@ class EndToEndTests(unittest.TestCase):
             refused = self.cli(*args, "--csv", expected=1)
             self.assertIn("error", refused)
 
+    def test_bundle_process_exit_leaves_valid_subset_and_competing_retries_complete_once(self):
+        # Real process exit and competing CLI retries cover persistence/locking;
+        # ordinary successful import cannot establish this recovery property.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, source, target = root / "witness", root / "source", root / "target"
+            self.cli("init", state)
+            key = load_private(state / "witness.key")
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            for index in range(3):
+                append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error", "error": str(index)})
+                checkpoint = root / "checkpoint.json"
+                checkpoint.write_text(json.dumps(make_checkpoint(verify(ledger, key.public_key()), key)))
+                self.cli("retain-checkpoint", checkpoint, "--store", source, "--public-key", public)
+            bundle = root / "bundle.json"
+            bundle.write_text(json.dumps(self.cli("export-retained", "--store", source, "--public-key", public)))
+            original, history = bundle.read_bytes(), ledger.read_bytes()
+            args = ["import-retained", str(bundle), "--store", str(target), "--public-key", str(public)]
+            code = ("import os,sys; from unittest.mock import patch; from wireledger import retention; from wireledger.__main__ import main\n"
+                    "original=retention._publish_claim\n"
+                    "def die(*args,**kwargs):\n"
+                    " original(*args,**kwargs); os._exit(91)\n"
+                    "with patch.object(retention,'_publish_claim',die): main(sys.argv[1:])\n")
+            killed = subprocess.run([sys.executable, "-c", code, *args], cwd=ROOT, capture_output=True, text=True, timeout=10)
+            self.assertEqual(killed.returncode, 91, killed.stdout + killed.stderr)
+            partial = {p.name:p.read_bytes() for p in target.glob("anchor-*.json")}
+            self.assertEqual(len(partial), 1)
+            self.assertEqual(self.cli("list-retained", "--store", target, "--public-key", public)["count"], 1)
+            writers = []
+            try:
+                for _ in range(2):
+                    writers.append(subprocess.Popen([sys.executable, "-m", "wireledger", *args], cwd=ROOT,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+                results = [process.communicate(timeout=15) for process in writers]
+            finally:
+                for process in writers:
+                    if process.poll() is None: process.kill(); process.communicate()
+            self.assertEqual([p.returncode for p in writers], [0,0], results)
+            reports = [json.loads(out) for out,err in results]
+            self.assertEqual(sorted(r["added_claims"] for r in reports), [0,2])
+            self.assertTrue(all(r["total_claims"] == 3 for r in reports))
+            self.assertEqual({p.name:p.read_bytes() for p in target.glob("anchor-*.json") if p.name in partial}, partial)
+            self.assertTrue(self.cli("check-retained", ledger, "--store", target, "--public-key", public)["ok"])
+            self.assertEqual(list(target.glob(".pending-anchor-*")), [])
+            self.assertEqual(bundle.read_bytes(), original)
+            self.assertEqual(ledger.read_bytes(), history)
+
     def test_portable_checkpoint_bundle_transfer_requires_explicit_trust_and_is_retryable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -32,7 +32,7 @@ def expected_endpoints(expected):
     return requested
 
 
-def collection_coverage(records, expected, *, exact=False, after_sequence=0):
+def collection_coverage(records, expected, *, exact=False, after_sequence=0, attention_only=False):
     """Compare verified collection with explicit intended endpoint/vantage rows."""
     requested = expected_endpoints(expected)
     if type(after_sequence) is not int or not 0 <= after_sequence <= 2**63-1:
@@ -50,12 +50,17 @@ def collection_coverage(records, expected, *, exact=False, after_sequence=0):
                             "observed-verified" if latest["status"] == "verified" else "latest-failed",
                         "samples": row["records"] if row else 0,
                         "latest_sequence": latest["sequence"] if latest else None})
+    checked_groups = len(results)
+    needs_attention = any(row["collection_state"] != "observed-verified" for row in results)
+    if attention_only:
+        results = [row for row in results if row["collection_state"] != "observed-verified"]
     unexpected = sorted(set(observed) - requested)
     return {"expected_groups": len(requested), "total_records": total_records, "selected_records": len(records), "after_sequence": after_sequence, "results": results,
             "unexpected_groups": [{"host": h, "port": p, "vantage": v} for h, p, v in unexpected],
-            "needs_attention": any(row["collection_state"] != "observed-verified" for row in results) or bool(exact and unexpected),
+            "needs_attention": needs_attention or bool(exact and unexpected),
+            **({"attention_only":True,"checked_expected_groups":checked_groups,"omitted_verified_groups":checked_groups-len(results)} if attention_only else {}),
             **({"exact_collection_required": True} if exact else {}),
-            "scope": "Expected manifest is an explicit local collection policy, not signed witness evidence. Full signed history is verified before selection. Latest means sequence order; an old verified sample does not establish freshness, availability, path validity or observer truth. Unexpected groups are listed; exact mode also requires that none exist. Selection uses signed sequences strictly after the explicit cursor; earlier observations are excluded from policy results but the CLI still authenticates the full history. A selected missing group may have older observations. Sequence selection is not clock freshness."}
+            "scope": "Attention-only output, when requested, omits verified expected groups but retains global attention and unexpected groups. Expected manifest is an explicit local collection policy, not signed witness evidence. Full signed history is verified before selection. Latest means sequence order; an old verified sample does not establish freshness, availability, path validity or observer truth. Unexpected groups are listed; exact mode also requires that none exist. Selection uses signed sequences strictly after the explicit cursor; earlier observations are excluded from policy results but the CLI still authenticates the full history. A selected missing group may have older observations. Sequence selection is not clock freshness."}
 
 
 def endpoint_inventory(records):

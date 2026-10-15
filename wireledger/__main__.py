@@ -66,6 +66,7 @@ def main(argv=None):
     coverage.add_argument("--checkpoint", type=Path)
     coverage.add_argument("--expected", type=Path, required=True, help="JSON array of host/port/vantage objects; no network calls")
     coverage.add_argument("--after-sequence", type=int, default=0, help="Evaluate collection strictly after this signed sequence; full history still authenticated")
+    coverage.add_argument("--attention-only", action="store_true", help="Omit expected groups whose latest sample is verified, keeping checked/omitted counts and unexpected groups")
     coverage.add_argument("--exact", action="store_true", help="Also require no endpoint/vantage groups outside the explicit expected manifest")
     inventory = sub.add_parser("endpoints", help="Inventory signed endpoint/vantage collection and latest status")
     inventory.add_argument("ledger", type=Path)
@@ -248,7 +249,7 @@ def main(argv=None):
             elif args.command == "coverage":
                 from .inventory import collection_coverage
                 from .ledger import _read, parse
-                result = collection_coverage(records, parse(_read(args.expected)), exact=args.exact, after_sequence=args.after_sequence)
+                result = collection_coverage(records, parse(_read(args.expected)), exact=args.exact, after_sequence=args.after_sequence, attention_only=args.attention_only)
                 code = 2 if result["needs_attention"] else 0
             elif args.command == "endpoints":
                 from .inventory import endpoint_inventory, collection_policy

@@ -1,5 +1,6 @@
 """Verified loopback observation, offline audit and checkpoint-constrained repair."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class EndToEndTests(unittest.TestCase):
-    def cli(self, *args, expected=0):
+    def cli(self, *args, expected=0, timeout=30):
         result = subprocess.run([sys.executable, "-m", "wireledger", *map(str, args)], cwd=ROOT,
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, timeout=timeout)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return json.loads(result.stdout) if result.stdout else result.stderr
 
@@ -36,6 +37,14 @@ class EndToEndTests(unittest.TestCase):
                 self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
                          "--ca-file", ca, "--timeout", "3")
             self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca)["ok"])
+            before_audit = ledger.read_bytes()
+            fifo = root / "unavailable-ca.pem"
+            os.mkfifo(fifo)
+            self.cli("audit", ledger, "--public-key", public, "--ca-file", fifo, expected=1, timeout=3)
+            self.assertEqual(ledger.read_bytes(), before_audit)
+            ca_link = root / "trusted-ca-link.pem"
+            ca_link.symlink_to(ca)
+            self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca_link)["ok"])
             timeline = self.cli("timeline", ledger, "--public-key", public, "--json")
             self.assertTrue(timeline)
             checkpoint = root / "checkpoint.json"

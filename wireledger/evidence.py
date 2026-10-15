@@ -3,9 +3,10 @@
 import base64
 import hashlib
 import ipaddress
+import os
 import re
+import stat
 from datetime import datetime, timezone
-from pathlib import Path
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -138,7 +139,10 @@ def validate_evidence(observation):
 
 
 def load_trust(path):
-    with Path(path).open("rb") as stream:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("CA input must be a regular file")
         raw = stream.read(MAX_CA_FILE + 1)
     if len(raw) > MAX_CA_FILE:
         raise ValueError("CA file exceeds 4 MiB")

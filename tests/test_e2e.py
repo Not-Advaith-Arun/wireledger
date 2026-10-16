@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from wireledger.lab import certificates, tls_server
+from wireledger.ledger import append, canonical, load_private, make_checkpoint, verify
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,6 +62,16 @@ class EndToEndTests(unittest.TestCase):
             checkpoint = root / "checkpoint.json"
             self.cli("checkpoint", state, checkpoint)
             self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
+            retained_bytes = {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")}
+            inventory = self.cli("list-retained", "--store", retained, "--public-key", public)
+            self.assertEqual(inventory["count"], 1)
+            self.assertEqual(inventory["checkpoints"][0]["count"], 2)
+            self.assertEqual(inventory["conflicting_heads"], [])
+            self.assertFalse(inventory["ancestry_unproven"])
+            self.assertEqual(retained_bytes, {p.name: p.read_bytes() for p in retained.glob("anchor-*.json")})
+            foreign = root / "foreign"
+            self.cli("init", foreign)
+            self.cli("list-retained", "--store", retained, "--public-key", foreign / "witness.pub", expected=1)
             original = ledger.read_bytes()
             ledger.write_bytes(original + b'{"body":')
             damaged = ledger.read_bytes()
@@ -73,6 +84,18 @@ class EndToEndTests(unittest.TestCase):
                      "--plan", plan, "--evidence", evidence)
             self.assertEqual(ledger.read_bytes(), original)
             self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
+            key = load_private(state / "witness.key")  # Disposable witness created by this journey.
+            records = verify(ledger, key.public_key())
+            fork = root / "fork.jsonl"
+            fork.write_bytes(canonical(records[0]) + b"\n")
+            append(fork, key, {**records[1]["body"]["observation"], "vantage": "deliberate-fork"})
+            fork_checkpoint = root / "fork-checkpoint.json"
+            fork_checkpoint.write_bytes(canonical(make_checkpoint(verify(fork, key.public_key()), key)))
+            self.cli("retain-checkpoint", fork_checkpoint, "--store", retained, "--public-key", public, expected=2)
+            conflicts = self.cli("list-retained", "--store", retained, "--public-key", public, expected=2)
+            self.assertEqual(conflicts["count"], 2)
+            self.assertEqual(len(conflicts["conflicting_heads"]), 1)
+            self.assertEqual(len(conflicts["conflicting_heads"][0]["heads"]), 2)
             ledger.write_bytes(original.replace(b"localhost", b"tampered!", 1))
             self.cli("verify", ledger, "--public-key", public, expected=1)
             self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test", expected=1)

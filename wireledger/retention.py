@@ -133,3 +133,20 @@ def check_retained_history(directory, ledger, key):
     return {"ok": all(row["relation"] == "consistent-prefix" for row in results),
             "witness": public_id(key), "history_count": len(records), "checkpoints": results,
             "scope": "Authenticated history against locally retained claims; consistency does not prove freshness or truthful observations."}
+
+
+def list_retained(directory, key):
+    """Inspect authenticated retained claims without needing an observer history."""
+    with _locked(directory) as directory:
+        checkpoints = _read(directory, key)
+    heads = {}
+    for checkpoint in checkpoints:
+        body = checkpoint["body"]
+        heads.setdefault(body["count"], set()).add(body["head"])
+    conflicts = [{"count": count, "heads": sorted(values)} for count, values in sorted(heads.items())
+                 if len(values) > 1]
+    return {"witness": public_id(key), "count": len(checkpoints),
+            "checkpoints": [checkpoint["body"] for checkpoint in checkpoints],
+            "conflicting_heads": conflicts,
+            "ancestry_unproven": len(heads) > 1,
+            "scope": "Signatures checked against independently supplied public key. Different counts do not prove ancestry; no history, freshness or store rollback check is performed."}

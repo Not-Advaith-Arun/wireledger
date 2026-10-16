@@ -68,6 +68,9 @@ def main(argv=None):
     retained.add_argument("ledger", type=Path)
     retained.add_argument("--store", type=Path, required=True)
     retained.add_argument("--public-key", type=Path, required=True)
+    inventory = sub.add_parser("list-retained", help="Inspect pinned signed checkpoint claims without an observation history")
+    inventory.add_argument("--store", type=Path, required=True)
+    inventory.add_argument("--public-key", type=Path, required=True)
     for command in ("recovery-preview", "recovery-apply"):
         recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
         recovery.add_argument("ledger", type=Path)
@@ -116,6 +119,10 @@ def main(argv=None):
             from .retention import check_retained_history
             result = check_retained_history(args.store, args.ledger, load_public(args.public_key))
             code = 0 if result["ok"] else 2
+        elif args.command == "list-retained":
+            from .retention import list_retained
+            result = list_retained(args.store, load_public(args.public_key))
+            code = 2 if result["conflicting_heads"] else 0
         elif args.command == "recovery-preview":
             from .recovery import recovery_preview
             result = recovery_preview(args.ledger, load_public(args.public_key), args.store)

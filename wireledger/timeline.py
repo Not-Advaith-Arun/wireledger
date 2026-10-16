@@ -7,10 +7,16 @@ from .evidence import parse_time, validate_evidence
 from .probe import changes
 
 
-def timeline(records, *, at_observed_time=False, now=None):
+def timeline(records, *, at_observed_time=False, now=None, host=None, port=None,
+             vantage=None, since=None, until=None, changes_only=False):
     current = now if now is not None else datetime.now(timezone.utc)
     if current.tzinfo is None or current.utcoffset() is None:
         raise ValueError("timeline time must be timezone-aware")
+    lower, upper = parse_time(since) if since else None, parse_time(until) if until else None
+    if lower and upper and lower > upper:
+        raise ValueError("timeline since must not be after until")
+    if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+        raise ValueError("timeline port must be between 1 and 65535")
     events = {event["sequence"]: event["changes"] for event in changes(records)}
     rows = []
     for record in records:
@@ -33,8 +39,23 @@ def timeline(records, *, at_observed_time=False, now=None):
         elif observation["status"] == "verified":
             row["provenance"] = "legacy-fingerprint-only"
         rows.append(row)
+    selected = []
+    for row in rows:
+        if ((host is not None and row["host"] != host)
+                or (port is not None and row["port"] != port)
+                or (vantage is not None and row["vantage"] != vantage)
+                or (changes_only and not row["changes"])):
+            continue
+        if lower or upper:
+            observed = parse_time(row["observed_at"])
+            if (lower and observed < lower) or (upper and observed > upper):
+                continue
+        selected.append(row)
     return {"time_policy": "observer-asserted-time" if at_observed_time else "current-time",
-            "results": rows,
+            "results": selected, "total_records": len(rows), "selected_records": len(selected),
+            "filters": {"host": host, "port": port, "vantage": vantage,
+                        "since": since, "until": until, "changes_only": changes_only},
+            "selection_scope": "Full history verified before filtering; changes computed against all prior samples. Time filters use signed observer-asserted timestamps, inclusively.",
             "scope": "Certificate validity windows, not an independent path audit. Times and vantages are observer assertions; differences are not attack verdicts."}
 
 

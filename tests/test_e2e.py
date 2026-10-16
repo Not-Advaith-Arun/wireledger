@@ -36,6 +36,8 @@ class EndToEndTests(unittest.TestCase):
             with tls_server(cert, private) as port:
                 self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
                          "--ca-file", ca, "--timeout", "3")
+                self.cli("observe", state, "localhost", "--port", port, "--connect-ip", "127.0.0.1",
+                         "--ca-file", ca, "--timeout", "3")
             self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca)["ok"])
             before_audit = ledger.read_bytes()
             fifo = root / "unavailable-ca.pem"
@@ -46,7 +48,16 @@ class EndToEndTests(unittest.TestCase):
             ca_link.symlink_to(ca)
             self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca_link)["ok"])
             timeline = self.cli("timeline", ledger, "--public-key", public, "--json")
-            self.assertTrue(timeline)
+            self.assertEqual(timeline["total_records"], 2)
+            selected = self.cli("timeline", ledger, "--public-key", public, "--json",
+                                "--host", "localhost", "--port", port, "--vantage", "local", "--changes-only")
+            self.assertEqual(selected["selected_records"], 1)
+            self.assertEqual(selected["results"][0]["sequence"], 1)
+            missing = self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test")
+            self.assertEqual(missing["results"], [])
+            future = self.cli("timeline", ledger, "--public-key", public, "--json", "--since", "2100-01-01T00:00:00Z")
+            self.assertEqual(future["results"], [])
+            self.cli("timeline", ledger, "--public-key", public, "--since", "2026-01-01", expected=1)
             checkpoint = root / "checkpoint.json"
             self.cli("checkpoint", state, checkpoint)
             self.cli("retain-checkpoint", checkpoint, "--store", retained, "--public-key", public)
@@ -64,4 +75,5 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
             ledger.write_bytes(original.replace(b"localhost", b"tampered!", 1))
             self.cli("verify", ledger, "--public-key", public, expected=1)
+            self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test", expected=1)
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)

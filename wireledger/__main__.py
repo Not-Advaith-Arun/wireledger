@@ -33,6 +33,12 @@ def main(argv=None):
         if command == "timeline":
             check.add_argument("--at-observed-time", action="store_true")
             check.add_argument("--json", action="store_true", help="emit structured timeline data")
+            check.add_argument("--host", help="exact endpoint hostname")
+            check.add_argument("--port", type=int)
+            check.add_argument("--vantage", help="exact observer vantage label")
+            check.add_argument("--since", help="inclusive observer timestamp with timezone")
+            check.add_argument("--until", help="inclusive observer timestamp with timezone")
+            check.add_argument("--changes-only", action="store_true", help="omit unchanged samples while retaining full-history change context")
     evidence = sub.add_parser("audit", help="verify signatures and independently audit captured certificates offline")
     evidence.add_argument("ledger", type=Path)
     evidence.add_argument("--public-key", type=Path, required=True)
@@ -140,7 +146,9 @@ def main(argv=None):
             if args.command == "report":
                 result["events"] = changes(records)
             elif args.command == "timeline":
-                result = timeline(records, at_observed_time=args.at_observed_time)
+                result = timeline(records, at_observed_time=args.at_observed_time, host=args.host,
+                                  port=args.port, vantage=args.vantage, since=args.since,
+                                  until=args.until, changes_only=args.changes_only)
                 if not args.json:
                     print(render_timeline(result))
                     return 0

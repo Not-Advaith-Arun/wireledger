@@ -39,6 +39,12 @@ def main(argv=None):
             check.add_argument("--since", help="inclusive observer timestamp with timezone")
             check.add_argument("--until", help="inclusive observer timestamp with timezone")
             check.add_argument("--changes-only", action="store_true", help="omit unchanged samples while retaining full-history change context")
+    sampling = sub.add_parser("continuity", help="Report observer-clock sampling gaps, stale samples and clock reversals")
+    sampling.add_argument("ledger", type=Path)
+    sampling.add_argument("--public-key", type=Path, required=True)
+    sampling.add_argument("--checkpoint", type=Path)
+    sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
+    sampling.add_argument("--max-gap-seconds", type=float, default=86400)
     evidence = sub.add_parser("audit", help="verify signatures and independently audit captured certificates offline")
     evidence.add_argument("ledger", type=Path)
     evidence.add_argument("--public-key", type=Path, required=True)
@@ -150,7 +156,11 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "report":
+            if args.command == "continuity":
+                from .continuity import continuity
+                result = continuity(records, as_of=args.as_of, max_gap_seconds=args.max_gap_seconds)
+                code = 2 if result["needs_attention"] else 0
+            elif args.command == "report":
                 result["events"] = changes(records)
             elif args.command == "timeline":
                 result = timeline(records, at_observed_time=args.at_observed_time, host=args.host,

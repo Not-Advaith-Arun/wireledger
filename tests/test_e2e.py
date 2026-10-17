@@ -86,6 +86,21 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
             key = load_private(state / "witness.key")  # Disposable witness created by this journey.
             records = verify(ledger, key.public_key())
+            sampled = root / "synthetic-clock.jsonl"
+            sampled.touch()
+            for stamp in ("2026-01-01T00:00:00Z", "2026-01-01T00:02:00Z", "2026-01-01T00:01:00Z"):
+                append(sampled, key, {**records[0]["body"]["observation"], "observed_at": stamp})
+            sampled_before = sampled.read_bytes()
+            continuity = self.cli("continuity", sampled, "--public-key", public,
+                                  "--as-of", "2026-01-01T00:05:00Z", "--max-gap-seconds", "90", expected=2)
+            group = continuity["results"][0]
+            self.assertEqual(group["gaps"][0]["seconds"], 120)
+            self.assertEqual(group["clock_reversals"][0]["seconds"], -60)
+            self.assertEqual(group["age_seconds"], 240)
+            self.assertEqual(group["sampling_state"], "stale-sample")
+            self.cli("continuity", sampled, "--public-key", public, "--as-of", "2026-01-01", expected=1)
+            self.cli("continuity", sampled, "--public-key", public, "--as-of", "2026-01-01T00:05:00Z", "--max-gap-seconds", "nan", expected=1)
+            self.assertEqual(sampled_before, sampled.read_bytes())
             fork = root / "fork.jsonl"
             fork.write_bytes(canonical(records[0]) + b"\n")
             append(fork, key, {**records[1]["body"]["observation"], "vantage": "deliberate-fork"})

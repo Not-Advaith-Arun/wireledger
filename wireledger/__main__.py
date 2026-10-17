@@ -45,6 +45,11 @@ def main(argv=None):
     sampling.add_argument("--checkpoint", type=Path)
     sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
+    views = sub.add_parser("vantages", help="Compare latest signed-sequence views across recorded vantage labels")
+    views.add_argument("ledger", type=Path)
+    views.add_argument("--public-key", type=Path, required=True)
+    views.add_argument("--checkpoint", type=Path)
+    views.add_argument("--max-pairs", type=int, default=1000, help="Global pair-comparison budget, 1..10000")
     evidence = sub.add_parser("audit", help="verify signatures and independently audit captured certificates offline")
     evidence.add_argument("ledger", type=Path)
     evidence.add_argument("--public-key", type=Path, required=True)
@@ -156,7 +161,11 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "continuity":
+            if args.command == "vantages":
+                from .vantages import compare_vantages
+                result = compare_vantages(records, max_pairs=args.max_pairs)
+                code = 0 if result["comparisons_complete"] else 2
+            elif args.command == "continuity":
                 from .continuity import continuity
                 result = continuity(records, as_of=args.as_of, max_gap_seconds=args.max_gap_seconds)
                 code = 2 if result["needs_attention"] else 0

@@ -90,10 +90,27 @@ class EndToEndTests(unittest.TestCase):
             sampled.touch()
             for stamp in ("2026-01-01T00:00:00Z", "2026-01-01T00:02:00Z", "2026-01-01T00:01:00Z"):
                 append(sampled, key, {**records[0]["body"]["observation"], "observed_at": stamp})
+            views = self.cli("vantages", sampled, "--public-key", public)
+            self.assertEqual(views["results"][0]["coverage"], "one-view-only")
+            other = json.loads(json.dumps(records[0]["body"]["observation"]))
+            other.update(vantage="other-view", peer_ip="127.0.0.2", connect_ip="127.0.0.2")
+            resolution = other["evidence"]["resolution"]
+            resolution["query"] = "127.0.0.2"
+            for address in resolution["candidates"] + resolution["attempted"] + [resolution["selected"]] + [a["address"] for a in other["network_attempt"]["attempts"]]:
+                address["ip"] = "127.0.0.2"  # Deliberately self-consistent synthetic observer claim.
+            append(sampled, key, other)
+            views = self.cli("vantages", sampled, "--public-key", public)
+            self.assertEqual(views["results"][0]["coverage"], "multiple-views")
+            self.assertIn("peer_ip", views["results"][0]["comparisons"][0]["differences"])
+            self.assertEqual(views["results"][0]["views"]["local"]["sequence"], 3)
+            append(sampled, key, {**records[0]["body"]["observation"], "vantage": "third-view"})
+            limited = self.cli("vantages", sampled, "--public-key", public, "--max-pairs", "1", expected=2)
+            self.assertFalse(limited["comparisons_complete"])
+            self.assertEqual(limited["results"][0]["omitted_pairs"], 2)
             sampled_before = sampled.read_bytes()
             continuity = self.cli("continuity", sampled, "--public-key", public,
                                   "--as-of", "2026-01-01T00:05:00Z", "--max-gap-seconds", "90", expected=2)
-            group = continuity["results"][0]
+            group = next(row for row in continuity["results"] if row["vantage"] == "local")
             self.assertEqual(group["gaps"][0]["seconds"], 120)
             self.assertEqual(group["clock_reversals"][0]["seconds"], -60)
             self.assertEqual(group["age_seconds"], 240)

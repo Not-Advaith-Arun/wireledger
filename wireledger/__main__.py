@@ -31,11 +31,14 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
         check.add_argument("--checkpoint", type=Path)
+        if command == "certificate-info":
+            check.add_argument("--sequence", type=int, required=True)
+            check.add_argument("--index", type=int, default=1, help="One-based captured certificate index, leaf first")
         if command == "certificate-chain":
             check.add_argument("--sequence", type=int, required=True)
             check.add_argument("--json", action="store_true", help="Include captured-chain metadata/scope; default emits public PEM certificates only")
@@ -240,7 +243,10 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "certificate-chain":
+            if args.command == "certificate-info":
+                from .chain_export import certificate_info
+                result = certificate_info(records,args.sequence,args.index)
+            elif args.command == "certificate-chain":
                 from .chain_export import certificate_chain
                 result = certificate_chain(records, args.sequence)
                 if not args.json:

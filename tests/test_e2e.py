@@ -1,5 +1,6 @@
 """Verified loopback observation, offline audit and checkpoint-constrained repair."""
 import json
+from datetime import datetime, timedelta
 import os
 from pathlib import Path
 import subprocess
@@ -94,6 +95,15 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(self.cli("check-retained", ledger, "--public-key", public, "--store", retained)["ok"])
             key = load_private(state / "witness.key")  # Disposable witness created by this journey.
             records = verify(ledger, key.public_key())
+            expires = records[0]["body"]["observation"]["not_after"]
+            nearing = self.cli("expiry", ledger, "--public-key", public, "--as-of", expires, "--within-days", "1", expected=2)
+            self.assertEqual(nearing["results"][0]["certificate_window"], "expires-within-horizon")
+            after_expiry = (datetime.fromisoformat(expires.replace("Z", "+00:00")) + timedelta(seconds=1)).isoformat()
+            expired = self.cli("expiry", ledger, "--public-key", public, "--as-of", after_expiry, expected=2)
+            self.assertEqual(expired["results"][0]["certificate_window"], "expired")
+            self.cli("expiry", ledger, "--public-key", public, "--as-of", expires, "--within-days", "nan", expected=1)
+            self.assertEqual(ledger.read_bytes(), original)
+
             sampled = root / "synthetic-clock.jsonl"
             sampled.touch()
             for stamp in ("2026-01-01T00:00:00Z", "2026-01-01T00:02:00Z", "2026-01-01T00:01:00Z"):

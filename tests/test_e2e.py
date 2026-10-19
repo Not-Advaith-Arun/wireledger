@@ -50,6 +50,14 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(self.cli("audit", ledger, "--public-key", public, "--ca-file", ca_link)["ok"])
             timeline = self.cli("timeline", ledger, "--public-key", public, "--json")
             self.assertEqual(timeline["total_records"], 2)
+            view = subprocess.check_output([sys.executable, "-m", "wireledger", "timeline", str(ledger),
+                "--public-key", str(public), "--html", "--max-rows", "1"], cwd=ROOT, text=True)
+            self.assertIn("Showing 1 of 2 selected samples from 2 verified records", view)
+            self.assertIn("observer claims", view)
+            self.assertNotIn("<script", view)
+            self.assertNotIn("PRIVATE KEY", view)
+            self.cli("timeline", ledger, "--public-key", public, "--html", "--max-rows", "0", expected=1)
+            self.assertEqual(ledger.read_bytes(), before_audit)
             selected = self.cli("timeline", ledger, "--public-key", public, "--json",
                                 "--host", "localhost", "--port", port, "--vantage", "local", "--changes-only")
             self.assertEqual(selected["selected_records"], 1)

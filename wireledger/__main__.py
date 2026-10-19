@@ -32,7 +32,10 @@ def main(argv=None):
         check.add_argument("--checkpoint", type=Path)
         if command == "timeline":
             check.add_argument("--at-observed-time", action="store_true")
-            check.add_argument("--json", action="store_true", help="emit structured timeline data")
+            output = check.add_mutually_exclusive_group()
+            output.add_argument("--json", action="store_true", help="emit structured timeline data")
+            output.add_argument("--html", action="store_true", help="emit a static local review, excluding signing keys/certificate bodies")
+            check.add_argument("--max-rows", type=int, default=200, help="HTML display budget, latest 1..1000 selected samples")
             check.add_argument("--host", help="exact endpoint hostname")
             check.add_argument("--port", type=int)
             check.add_argument("--vantage", help="exact observer vantage label")
@@ -175,6 +178,10 @@ def main(argv=None):
                 result = timeline(records, at_observed_time=args.at_observed_time, host=args.host,
                                   port=args.port, vantage=args.vantage, since=args.since,
                                   until=args.until, changes_only=args.changes_only)
+                if args.html:
+                    from .timeline_view import render_html
+                    print(render_html(result, max_rows=args.max_rows))
+                    return 0
                 if not args.json:
                     print(render_timeline(result))
                     return 0

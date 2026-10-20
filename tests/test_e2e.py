@@ -136,6 +136,26 @@ class EndToEndTests(unittest.TestCase):
             self.cli("continuity", sampled, "--public-key", public, "--as-of", "2026-01-01", expected=1)
             self.cli("continuity", sampled, "--public-key", public, "--as-of", "2026-01-01T00:05:00Z", "--max-gap-seconds", "nan", expected=1)
             self.assertEqual(sampled_before, sampled.read_bytes())
+            reuse_history = root / "reuse.jsonl"
+            reuse_history.touch()
+            first = records[0]["body"]["observation"]
+            append(reuse_history, key, first)
+            second = {**first, "port": first["port"] + 1}
+            # Port is an observer claim outside certificate evidence identity.
+            second = json.loads(json.dumps(second))
+            # Use legacy supported observation shape for synthetic cross-port claims.
+            second.pop("evidence", None)
+            second.pop("network_attempt", None)
+            append(reuse_history, key, second)
+            reuse_bytes = reuse_history.read_bytes()
+            reused = self.cli("fingerprint-reuse", reuse_history, "--public-key", public)
+            self.assertEqual(reused["shared"]["spki_sha256"][0]["distinct_endpoints"], 2)
+            self.assertEqual(reused["shared"]["certificate_sha256"][0]["distinct_endpoints"], 2)
+            self.assertEqual(reuse_history.read_bytes(), reuse_bytes)
+            append(reuse_history, key, {"host": second["host"], "port": second["port"], "vantage": second["vantage"], "status": "error", "error": "Synthetic failure", "observed_at": second["observed_at"]})
+            failed_latest = self.cli("fingerprint-reuse", reuse_history, "--public-key", public)
+            self.assertEqual(failed_latest["shared"]["spki_sha256"], [])
+            self.assertEqual(len(failed_latest["unavailable_samples"]), 1)
             fork = root / "fork.jsonl"
             fork.write_bytes(canonical(records[0]) + b"\n")
             append(fork, key, {**records[1]["body"]["observation"], "vantage": "deliberate-fork"})

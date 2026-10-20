@@ -48,6 +48,10 @@ def main(argv=None):
     sampling.add_argument("--checkpoint", type=Path)
     sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
+    reuse = sub.add_parser("fingerprint-reuse", help="Inspect shared latest certificate/key fingerprints across distinct endpoints")
+    reuse.add_argument("ledger", type=Path)
+    reuse.add_argument("--public-key", type=Path, required=True)
+    reuse.add_argument("--checkpoint", type=Path)
     expiration = sub.add_parser("expiry", help="Inspect latest signed-sequence certificate expiry horizons without network access")
     expiration.add_argument("ledger", type=Path)
     expiration.add_argument("--public-key", type=Path, required=True)
@@ -171,7 +175,10 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "expiry":
+            if args.command == "fingerprint-reuse":
+                from .reuse import fingerprint_reuse
+                result = fingerprint_reuse(records)
+            elif args.command == "expiry":
                 from .expiry import expiry
                 result = expiry(records, as_of=args.as_of, within_days=args.within_days, max_age_seconds=args.max_age_seconds)
                 code = 2 if result["needs_attention"] else 0

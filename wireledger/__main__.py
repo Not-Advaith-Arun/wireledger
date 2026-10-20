@@ -48,6 +48,10 @@ def main(argv=None):
     sampling.add_argument("--checkpoint", type=Path)
     sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
+    inventory = sub.add_parser("endpoints", help="Inventory signed endpoint/vantage collection and latest status")
+    inventory.add_argument("ledger", type=Path)
+    inventory.add_argument("--public-key", type=Path, required=True)
+    inventory.add_argument("--checkpoint", type=Path)
     reuse = sub.add_parser("fingerprint-reuse", help="Inspect shared latest certificate/key fingerprints across distinct endpoints")
     reuse.add_argument("ledger", type=Path)
     reuse.add_argument("--public-key", type=Path, required=True)
@@ -175,7 +179,10 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "fingerprint-reuse":
+            if args.command == "endpoints":
+                from .inventory import endpoint_inventory
+                result = endpoint_inventory(records)
+            elif args.command == "fingerprint-reuse":
                 from .reuse import fingerprint_reuse
                 result = fingerprint_reuse(records)
             elif args.command == "expiry":

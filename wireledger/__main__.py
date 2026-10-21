@@ -48,6 +48,11 @@ def main(argv=None):
     sampling.add_argument("--checkpoint", type=Path)
     sampling.add_argument("--as-of", required=True, help="Explicit timezone-aware comparison time")
     sampling.add_argument("--max-gap-seconds", type=float, default=86400)
+    coverage = sub.add_parser("coverage", help="Compare signed observations with an explicit expected endpoint/vantage manifest")
+    coverage.add_argument("ledger", type=Path)
+    coverage.add_argument("--public-key", type=Path, required=True)
+    coverage.add_argument("--checkpoint", type=Path)
+    coverage.add_argument("--expected", type=Path, required=True, help="JSON array of host/port/vantage objects; no network calls")
     inventory = sub.add_parser("endpoints", help="Inventory signed endpoint/vantage collection and latest status")
     inventory.add_argument("ledger", type=Path)
     inventory.add_argument("--public-key", type=Path, required=True)
@@ -179,7 +184,12 @@ def main(argv=None):
                       "head": record_hash(records[-1]) if records else ZERO,
                       "checkpoint_checked": bool(args.checkpoint),
                       "scope": "authenticity and chain consistency; observer truth is not proven"}
-            if args.command == "endpoints":
+            if args.command == "coverage":
+                from .inventory import collection_coverage
+                from .ledger import _read, parse
+                result = collection_coverage(records, parse(_read(args.expected)))
+                code = 2 if result["needs_attention"] else 0
+            elif args.command == "endpoints":
                 from .inventory import endpoint_inventory
                 result = endpoint_inventory(records)
             elif args.command == "fingerprint-reuse":

@@ -3,6 +3,49 @@ from collections import Counter
 from .evidence import validate_evidence
 
 
+def collection_coverage(records, expected):
+    """Compare verified collection with explicit intended endpoint/vantage rows."""
+    if not isinstance(expected, list) or not 1 <= len(expected) <= 1000:
+        raise ValueError("expected collection must contain 1..1000 endpoint rows")
+    requested = set()
+    for row in expected:
+        if not isinstance(row, dict) or set(row) != {"host", "port", "vantage"}:
+            raise ValueError("expected rows require exactly host, port and vantage")
+        host, port, vantage = row["host"], row["port"], row["vantage"]
+        if (not isinstance(host, str) or not host or len(host) > 253
+                or any(c.isspace() or c in "/\\\x00" for c in host)):
+            raise ValueError("invalid expected hostname")
+        try:
+            host = host.encode("idna").decode("ascii").lower().rstrip(".")
+        except UnicodeError as error:
+            raise ValueError("invalid expected hostname") from error
+        if not host or len(host) > 253 or any(ord(c) < 33 or ord(c) > 126 for c in host):
+            raise ValueError("invalid expected hostname")
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError("expected port must be 1..65535")
+        if not isinstance(vantage, str) or not vantage or len(vantage) > 120 or not vantage.isprintable():
+            raise ValueError("invalid expected vantage")
+        key = host, port, vantage
+        if key in requested:
+            raise ValueError("duplicate expected endpoint/vantage")
+        requested.add(key)
+    inventory = endpoint_inventory(records)
+    observed = {(row["host"], row["port"], row["vantage"]): row for row in inventory["results"]}
+    results = []
+    for host, port, vantage in sorted(requested):
+        row = observed.get((host, port, vantage))
+        latest = row["latest"] if row else None
+        results.append({"host": host, "port": port, "vantage": vantage,
+                        "collection_state": "missing" if latest is None else
+                            "observed-verified" if latest["status"] == "verified" else "latest-failed",
+                        "samples": row["records"] if row else 0,
+                        "latest_sequence": latest["sequence"] if latest else None})
+    return {"expected_groups": len(requested), "total_records": len(records), "results": results,
+            "unexpected_groups": [{"host": h, "port": p, "vantage": v} for h, p, v in sorted(set(observed) - requested)],
+            "needs_attention": any(row["collection_state"] != "observed-verified" for row in results),
+            "scope": "Expected manifest is an explicit local collection policy, not signed witness evidence. Full signed history is verified before selection. Latest means sequence order; an old verified sample does not establish freshness, availability, path validity or observer truth. Unexpected groups are listed, not rejected."}
+
+
 def endpoint_inventory(records):
     groups = {}
     for record in records:

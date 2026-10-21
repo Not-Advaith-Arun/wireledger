@@ -47,6 +47,21 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(inventory["results"][0]["status_counts"], {"verified": 2})
             self.assertEqual(inventory["results"][0]["latest"]["sequence"], 2)
             self.assertEqual(ledger.read_bytes(), before_audit)
+            expected_file = root / "expected.json"
+            intended = {"host": "LOCALHOST.", "port": port, "vantage": "local"}
+            expected_file.write_text(json.dumps([intended, {**intended, "vantage": "absent"}]))
+            policy_bytes = expected_file.read_bytes()
+            coverage = self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file, expected=2)
+            self.assertEqual({r["vantage"]: r["collection_state"] for r in coverage["results"]},
+                             {"local": "observed-verified", "absent": "missing"})
+            self.assertEqual(expected_file.read_bytes(), policy_bytes)
+            expected_file.write_text(json.dumps([intended]))
+            self.assertFalse(self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file)["needs_attention"])
+            for policy in ([intended, {**intended, "host": "localhost"}], [{**intended, "port": True}], []):
+                expected_file.write_text(json.dumps(policy))
+                self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file, expected=1)
+            expected_file.write_text(json.dumps([intended]))
+            self.assertEqual(ledger.read_bytes(), before_audit)
             fifo = root / "unavailable-ca.pem"
             os.mkfifo(fifo)
             self.cli("audit", ledger, "--public-key", public, "--ca-file", fifo, expected=1, timeout=3)
@@ -166,6 +181,10 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(failed_group["latest"]["status"], "error")
             self.assertIsNone(failed_group["latest"]["certificate_sha256"])
             self.assertEqual(failed_group["status_counts"], {"verified":1, "error":1})
+            expected_file.write_text(json.dumps([{k: second[k] for k in ("host", "port", "vantage")}]))
+            failed_coverage = self.cli("coverage", reuse_history, "--public-key", public, "--expected", expected_file, expected=2)
+            self.assertEqual(failed_coverage["results"][0]["collection_state"], "latest-failed")
+            self.assertEqual(len(failed_coverage["unexpected_groups"]), 1)
             fork = root / "fork.jsonl"
             fork.write_bytes(canonical(records[0]) + b"\n")
             append(fork, key, {**records[1]["body"]["observation"], "vantage": "deliberate-fork"})
@@ -179,6 +198,7 @@ class EndToEndTests(unittest.TestCase):
             ledger.write_bytes(original.replace(b"localhost", b"tampered!", 1))
             self.cli("verify", ledger, "--public-key", public, expected=1)
             self.cli("endpoints", ledger, "--public-key", public, expected=1)
+            self.cli("coverage", ledger, "--public-key", public, "--expected", expected_file, expected=1)
             self.cli("timeline", ledger, "--public-key", public, "--json", "--host", "absent.test", expected=1)
             self.cli("recovery-preview", ledger, "--public-key", public, "--store", retained, expected=1)
 

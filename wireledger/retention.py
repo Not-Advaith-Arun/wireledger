@@ -73,6 +73,29 @@ def _read(directory, key):
     return sorted(checkpoints, key=lambda item: (item["body"]["count"], item["body"]["head"]))
 
 
+
+def _publish_claim(directory, name, encoded, duplicate):
+    destination = directory / name
+    if not duplicate:
+        fd, temporary = tempfile.mkstemp(prefix=".pending-anchor-", dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(encoded + b"\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(temporary, destination, follow_symlinks=False)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+    else:
+        fd = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    _sync_directory(directory)
+    _sync_directory(directory.parent)
+
+
 def retain_checkpoint(directory, checkpoint, key):
     """Retain one authenticated claim, including a conflicting signed claim."""
     body = verify_checkpoint(checkpoint, key)  # fail before any filesystem mutation
@@ -84,27 +107,9 @@ def retain_checkpoint(directory, checkpoint, key):
                      for existing in checkpoints]
         destination = directory / name
         duplicate = "identical" in relations
-        if not duplicate:
-            if len(checkpoints) >= MAX_CHECKPOINTS:
-                raise LedgerError("checkpoint store is full; existing claims are preserved")
-            fd, temporary = tempfile.mkstemp(prefix=".pending-anchor-", dir=directory)
-            try:
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(encoded + b"\n")
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.link(temporary, destination, follow_symlinks=False)
-            finally:
-                Path(temporary).unlink(missing_ok=True)
-        else:
-            # Retrying after uncertain publication also retries durability work.
-            fd = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        _sync_directory(directory)
-        _sync_directory(directory.parent)
+        if not duplicate and len(checkpoints) >= MAX_CHECKPOINTS:
+            raise LedgerError("checkpoint store is full; existing claims are preserved")
+        _publish_claim(directory, name, encoded, duplicate)
         return {"retained": True, "already_retained": duplicate,
                 "witness": body["witness"], "count": len(checkpoints) + (not duplicate),
                 "checkpoint_file": str(destination),
@@ -116,6 +121,46 @@ def retain_checkpoint(directory, checkpoint, key):
 def check_retained_history(directory, ledger, key):
     """Authenticate a history, then compare every retained signed prefix claim."""
     return _check_retained_records(directory, verify(ledger, key), key)
+
+
+def export_bundle(directory, key):
+    with _locked(directory) as directory:
+        checkpoints = _read(directory, key)
+    if not checkpoints:
+        raise LedgerError("no retained claims to export")
+    return {"format": "wireledger.checkpoint-bundle.v1", "witness": public_id(key), "checkpoints": checkpoints}
+
+
+def retain_bundle(directory, bundle, key):
+    if (not isinstance(bundle, dict) or set(bundle) != {"format", "witness", "checkpoints"}
+            or bundle["format"] != "wireledger.checkpoint-bundle.v1" or bundle["witness"] != public_id(key)):
+        raise LedgerError("bundle must match the independently supplied public key and supported format")
+    incoming = bundle["checkpoints"]
+    if not isinstance(incoming, list) or not 1 <= len(incoming) <= MAX_CHECKPOINTS:
+        raise LedgerError("bundle requires 1..1024 signed checkpoints")
+    prepared = {}
+    for checkpoint in incoming:
+        body = verify_checkpoint(checkpoint, key)
+        name = "anchor-" + hashlib.sha256(canonical(body)).hexdigest() + ".json"
+        if name in prepared:
+            raise LedgerError("bundle contains a duplicate checkpoint claim")
+        prepared[name] = checkpoint
+    with _locked(directory, create=True) as directory:
+        existing = _read(directory, key)
+        names = {"anchor-" + hashlib.sha256(canonical(cp["body"])).hexdigest() + ".json" for cp in existing}
+        added = len(set(prepared) - names)
+        if len(existing) + added > MAX_CHECKPOINTS:
+            raise LedgerError("bundle exceeds remaining checkpoint store capacity; existing claims preserved")
+        for name, checkpoint in prepared.items():
+            _publish_claim(directory, name, canonical(checkpoint), name in names)
+        heads = {}
+        for checkpoint in existing + incoming:
+            body = checkpoint["body"]
+            heads.setdefault(body["count"], set()).add(body["head"])
+    return {"retained": True, "witness": public_id(key), "imported_claims": len(incoming),
+            "added_claims": added, "already_retained_claims": len(incoming) - added,
+            "total_claims": len(existing) + added, "conflicting_heads": any(len(h) > 1 for h in heads.values()),
+            "scope": "Every incoming/existing signature and capacity checked before claim publication against your supplied key. Each claim publishes atomically; the bundle is not a transaction. I/O failure may leave a valid partial subset: preserve the store and retry the exact bundle. Signed conflicts retained, never overwritten. No bundle authenticity, independent custody, ancestry, freshness or observer truth established."}
 
 
 def _check_retained_records(directory, records, key):

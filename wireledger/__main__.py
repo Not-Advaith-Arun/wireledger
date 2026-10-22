@@ -113,6 +113,12 @@ def main(argv=None):
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
+    for name in ("export-retained", "import-retained"):
+        bundle = sub.add_parser(name, help="Transfer signed retained claims; independently supplied key required, no custody/freshness guarantee")
+        bundle.add_argument("--store", type=Path, required=True)
+        bundle.add_argument("--public-key", type=Path, required=True)
+        if name == "import-retained":
+            bundle.add_argument("input", type=Path, help="Checkpoint bundle; all signatures checked before per-file publication")
     for command in ("recovery-preview", "recovery-apply"):
         recovery = sub.add_parser(command, help="explicit checkpoint-constrained recovery of an interrupted final append")
         recovery.add_argument("ledger", type=Path)
@@ -149,6 +155,13 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command in ("export-retained", "import-retained"):
+            from .retention import export_bundle, retain_bundle
+            from .ledger import parse, _read
+            key = load_public(args.public_key)
+            result = (export_bundle(args.store, key) if args.command == "export-retained" else
+                      retain_bundle(args.store, parse(_read(args.input)), key))
+            code = 2 if result.get("conflicting_heads") else 0
         elif args.command == "compare-retained":
             from .retention import compare_retained
             result = compare_retained(args.left, args.right, load_public(args.public_key))

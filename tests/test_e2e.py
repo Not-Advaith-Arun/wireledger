@@ -453,6 +453,60 @@ class EndToEndTests(unittest.TestCase):
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
 
+    def test_portable_checkpoint_bundle_transfer_requires_explicit_trust_and_is_retryable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, source, target = root / "witness", root / "source", root / "target"
+            self.cli("init", state)
+            key = load_private(state / "witness.key")
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            for index in (1, 2):
+                append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": "local", "status": "error",
+                                     "observed_at": "2026-10-22T12:00:00Z", "error": str(index)})
+                checkpoint = root / (str(index) + ".json")
+                self.cli("checkpoint", state, checkpoint)
+                self.cli("retain-checkpoint", checkpoint, "--store", source, "--public-key", public)
+            original = ledger.read_bytes()
+            bundle = self.cli("export-retained", "--store", source, "--public-key", public)
+            self.assertEqual(len(bundle["checkpoints"]), 2)
+            self.assertNotIn("PRIVATE KEY", json.dumps(bundle))
+            file = root / "bundle.json"
+            file.write_text(json.dumps(bundle))
+            saved_bundle = file.read_bytes()
+            imported = self.cli("import-retained", file, "--store", target, "--public-key", public)
+            self.assertEqual((imported["added_claims"], imported["total_claims"]), (2, 2))
+            anchors = {p.name: p.read_bytes() for p in target.glob("anchor-*.json")}
+            retry = self.cli("import-retained", file, "--store", target, "--public-key", public)
+            self.assertEqual((retry["added_claims"], retry["already_retained_claims"]), (0, 2))
+            self.assertEqual({p.name: p.read_bytes() for p in target.glob("anchor-*.json")}, anchors)
+            self.assertTrue(self.cli("check-retained", ledger, "--store", target, "--public-key", public)["ok"])
+            other = root / "other"
+            self.cli("init", other)
+            foreign = root / "foreign.json"
+            self.cli("checkpoint", other, foreign)
+            invalid = [{**bundle, "witness": "0" * 64},
+                       {**bundle, "checkpoints": [bundle["checkpoints"][0], json.loads(foreign.read_text())]},
+                       {**bundle, "checkpoints": [bundle["checkpoints"][0]] * 2}]
+            for index, value in enumerate(invalid):
+                bad, destination = root / "bad.json", root / ("rejected-" + str(index))
+                bad.write_text(json.dumps(value))
+                self.cli("import-retained", bad, "--store", destination, "--public-key", public, expected=1)
+                self.assertFalse(destination.exists())
+            fork = root / "fork.jsonl"
+            fork.write_bytes(b"")
+            append(fork, key, {"host": "conflict.test", "port": 443, "vantage": "local", "status": "error"})
+            conflicting = make_checkpoint(verify(fork, key.public_key()), key)
+            conflict_file = root / "conflict.json"
+            conflict_file.write_text(json.dumps({**bundle, "checkpoints": [conflicting]}))
+            conflict = self.cli("import-retained", conflict_file, "--store", target, "--public-key", public, expected=2)
+            self.assertTrue(conflict["conflicting_heads"])
+            self.assertEqual(conflict["total_claims"], 3)
+            self.assertEqual({p.name: p.read_bytes() for p in target.glob("anchor-*.json") if p.name in anchors}, anchors)
+            self.assertEqual(ledger.read_bytes(), original)
+            self.assertEqual(file.read_bytes(), saved_bundle)
+            self.assertEqual(len(self.cli("export-retained", "--store", target, "--public-key", public)["checkpoints"]), 3)
+            self.assertEqual(list(target.glob(".pending-anchor-*")), [])
+
     def test_compare_retained_stores_distinguishes_missing_claims_equal_sets_and_signed_conflicts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

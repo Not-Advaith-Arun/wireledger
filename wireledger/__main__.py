@@ -35,6 +35,7 @@ def main(argv=None):
             output = check.add_mutually_exclusive_group()
             output.add_argument("--json", action="store_true", help="emit structured timeline data")
             output.add_argument("--html", action="store_true", help="emit a static local review, excluding signing keys/certificate bodies")
+            output.add_argument("--csv", action="store_true", help="CSV page with literal-safe text and repeated page metadata; empty page has headers only, use JSON for full cursor/scope")
             check.add_argument("--max-rows", type=int, default=200, help="HTML display budget, latest 1..1000 selected samples")
             check.add_argument("--host", help="exact endpoint hostname")
             check.add_argument("--port", type=int)
@@ -245,6 +246,10 @@ def main(argv=None):
                 if args.html:
                     from .timeline_view import render_html
                     print(render_html(result, max_rows=args.max_rows))
+                    return 0
+                if args.csv:
+                    from .timeline import render_csv
+                    print(render_csv(result), end="")
                     return 0
                 if not args.json:
                     print(render_timeline(result))

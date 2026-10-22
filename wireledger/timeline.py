@@ -1,6 +1,8 @@
 """Readable, terminal-safe signed observations with explicit validity-time policy."""
 
 import json
+import csv
+import io
 from datetime import datetime, timezone
 
 from .evidence import parse_time, validate_evidence
@@ -88,3 +90,25 @@ def render_timeline(report):
             lines.append("  spki=" + row["spki_sha256"] + " provenance=" + row["provenance"])
         lines.append("  changes=" + quoted(row["changes"]))
     return "\n".join(lines)
+
+
+def render_csv(report):
+    columns = ["sequence", "observed_at", "host", "port", "vantage", "status", "validity", "changes",
+               "spki_sha256", "certificate_sha256", "peer_ip", "provenance", "time_policy",
+               "total_records", "matching_records", "has_more", "next_after_sequence", "scope"]
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    def cell(value):
+        if value is None:
+            return ""
+        if type(value) is bool:
+            return "true" if value else "false"
+        if isinstance(value, (list, dict)):
+            value = json.dumps(value, ensure_ascii=True, sort_keys=True)
+        return "'" + value if isinstance(value, str) and value else value
+    for row in report["results"]:
+        value = {**row, **{key: report[key] for key in ("time_policy", "total_records", "matching_records", "has_more", "next_after_sequence")},
+                 "scope": "Observer-asserted samples; whole history verified. No independent path/freshness/attack verdict. See JSON for full filters and pagination scope."}
+        writer.writerow([cell(value.get(key)) for key in columns])
+    return output.getvalue()

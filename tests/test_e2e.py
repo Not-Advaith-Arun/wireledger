@@ -1,5 +1,7 @@
 """Verified loopback observation, offline audit and checkpoint-constrained repair."""
 import json
+import csv
+import io
 import hashlib
 from datetime import datetime, timedelta
 import os
@@ -19,11 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class EndToEndTests(unittest.TestCase):
-    def cli(self, *args, expected=0, timeout=30):
+    def cli(self, *args, expected=0, timeout=30, raw=False):
         result = subprocess.run([sys.executable, "-m", "wireledger", *map(str, args)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=timeout)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
-        return json.loads(result.stdout) if result.stdout else result.stderr
+        return result.stdout if raw else json.loads(result.stdout) if result.stdout else result.stderr
 
     def test_rotation_independent_views_and_signed_fork_demo(self):
         report = self.cli("demo")
@@ -452,6 +454,39 @@ class EndToEndTests(unittest.TestCase):
             damaged = ledger.read_bytes()
             self.cli("vantages", ledger, "--public-key", public, "--max-pairs", "1", expected=1)
             self.assertEqual(ledger.read_bytes(), damaged)
+
+    def test_verified_timeline_csv_preserves_selected_page_and_literal_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "witness"
+            self.cli("init", state)
+            ledger, public = state / "observations.jsonl", state / "witness.pub"
+            key = load_private(state / "witness.key")
+            label = '=SUM(1,2)\n"quoted"'
+            for index in range(3):
+                append(ledger, key, {"host": "fixture.test", "port": 443, "vantage": label, "status": "error",
+                                     "observed_at": "2026-10-22T12:00:00Z", "error": str(index)})
+            original = ledger.read_bytes()
+            args = ("timeline", ledger, "--public-key", public, "--host", "fixture.test", "--limit", "1", "--after-sequence", "1")
+            expected = self.cli(*args, "--json")
+            raw = self.cli(*args, "--csv", raw=True)
+            rows = list(csv.DictReader(io.StringIO(raw)))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(int(rows[0]["sequence"]), expected["results"][0]["sequence"])
+            self.assertEqual(rows[0]["vantage"], "'" + label)
+            self.assertEqual(rows[0]["host"], "'fixture.test")
+            self.assertEqual(rows[0]["port"], "443")
+            self.assertEqual(rows[0]["has_more"], "true")
+            self.assertEqual(int(rows[0]["next_after_sequence"]), expected["next_after_sequence"])
+            self.assertEqual(int(rows[0]["matching_records"]), 3)
+            empty = self.cli("timeline", ledger, "--public-key", public, "--host", "absent.test", "--csv", raw=True)
+            self.assertEqual(list(csv.DictReader(io.StringIO(empty))), [])
+            self.assertTrue(empty.startswith("sequence,"))
+            self.assertEqual(ledger.read_bytes(), original)
+            records = [json.loads(line) for line in original.splitlines()]
+            records[0]["body"]["observation"]["host"] = "excluded-tampered.test"
+            ledger.write_bytes(b"".join(canonical(row) + b"\n" for row in records))
+            refused = self.cli(*args, "--csv", expected=1)
+            self.assertIn("error", refused)
 
     def test_portable_checkpoint_bundle_transfer_requires_explicit_trust_and_is_retryable(self):
         with tempfile.TemporaryDirectory() as directory:

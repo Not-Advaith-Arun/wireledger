@@ -14,6 +14,8 @@ from .timeline import render_timeline, timeline
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Signed, locally verifiable TLS observation histories")
     sub = parser.add_subparsers(dest="command", required=True)
+    from .showcase import arguments as showcase_arguments
+    showcase_arguments(sub.add_parser("showcase", help="generate an interactive offline product sample"))
     init = sub.add_parser("init", help="create a new local witness, refusing existing directories")
     init.add_argument("directory", type=Path)
     probe = sub.add_parser("observe", help="perform one verified TLS handshake and append its observation")
@@ -154,6 +156,9 @@ def main(argv=None):
             recovery.add_argument("--evidence", type=Path, required=True, help="separate directory for exclusive original-byte evidence")
     sub.add_parser("demo", help="loopback-only certificate rotation and tamper detection demonstration")
     args = parser.parse_args(argv)
+    if args.command == "showcase":
+        from .showcase import generate
+        return generate(args)
     try:
         code = 0
         if args.command == "init":

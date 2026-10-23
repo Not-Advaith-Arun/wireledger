@@ -14,3 +14,6 @@ wireledger = "wireledger.__main__:main"
 
 [tool.setuptools]
 packages = ["wireledger"]
+
+[tool.setuptools.package-data]
+wireledger = ["ui/*.html", "ui/*.css", "ui/*.js"]

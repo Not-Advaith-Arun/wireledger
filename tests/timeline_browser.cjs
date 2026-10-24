@@ -1,0 +1,14 @@
+"use strict";
+const {chromium}=require(process.env.SHOWCASE_PLAYWRIGHT_MODULE||'playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{execFileSync}=require('node:child_process'),{pathToFileURL}=require('node:url');
+const build=`from pathlib import Path
+import sys,subprocess
+from wireledger.lab import certificates,tls_server
+from wireledger.ledger import initialize,load_private,append
+from wireledger.probe import observe
+root=Path(sys.argv[1]);ca,pairs=certificates(root);store=root/'witness';initialize(store);key=load_private(store/'witness.key');ledger=store/'observations.jsonl';port=0
+for cert,private in pairs:
+ with tls_server(cert,private,port=port) as bound:
+  port=bound;append(ledger,key,observe('localhost',port,connect_ip='127.0.0.1',cafile=str(ca),vantage='browser-lab'))
+subprocess.run([sys.executable,'-m','wireledger','timeline',str(ledger),'--public-key',str(store/'witness.pub'),'--html','--at-observed-time'],stdout=(root/'timeline.html').open('w'),check=True)
+`;
+(async()=>{const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'wireledger-timeline-ui-'));let b;try{const root=path.resolve(__dirname,'..');execFileSync('python3',['-c',build,tmp],{cwd:root});const ledger=path.join(tmp,'witness','observations.jsonl'),before=fs.readFileSync(ledger);b=await chromium.launch();const p=await b.newPage({offline:true,viewport:{width:1440,height:950}}),errors=[],requests=[];p.on('pageerror',e=>errors.push(e.message));p.on('request',r=>{if(/^https?:/.test(r.url()))requests.push(r.url());});await p.goto(pathToFileURL(path.join(tmp,'timeline.html')).href);assert.equal(await p.locator('tbody tr:visible').count(),3);await p.getByLabel('Sample status').selectOption('error');assert.equal(await p.locator('tbody tr:visible').count(),0);await p.getByRole('button',{name:'Clear filters'}).click();await p.getByLabel('Changes only').check();assert.equal(await p.locator('tbody tr:visible').count(),3);await p.getByLabel('Search displayed samples').fill('unregistered-endpoint');assert.equal(await p.locator('tbody tr:visible').count(),0);await p.getByRole('button',{name:'Clear filters'}).click();assert.equal(await p.locator('tbody tr:visible').count(),3);await p.getByRole('button',{name:'Dark theme'}).click();await p.setViewportSize({width:390,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(fs.readFileSync(ledger),before);assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);console.log('Verified loopback CLI timeline:3 real signed samples, displayed-page filters, reset/empty results, dark/mobile and unchanged ledger passed');}finally{if(b)await b.close();fs.rmSync(tmp,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1;});

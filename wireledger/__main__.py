@@ -87,10 +87,12 @@ def main(argv=None):
     inventory.add_argument("--policy", action="store_true", help="Export unsigned endpoint/vantage policy candidate from observed groups; review intent before using with coverage/observe-policy")
     reuse = sub.add_parser("fingerprint-reuse", help="Inspect shared latest certificate/key fingerprints across distinct endpoints")
     reuse.add_argument("ledger", type=Path)
+    reuse.add_argument("--html",action="store_true",help="Captured fingerprint sharing only; no attack or ownership verdict")
     reuse.add_argument("--public-key", type=Path, required=True)
     reuse.add_argument("--checkpoint", type=Path)
     expiration = sub.add_parser("expiry", help="Inspect latest signed-sequence certificate expiry horizons without network access")
     expiration.add_argument("ledger", type=Path)
+    expiration.add_argument("--html",action="store_true",help="Captured expiry and observer-clock cards; attention exit retained")
     expiration.add_argument("--public-key", type=Path, required=True)
     expiration.add_argument("--checkpoint", type=Path)
     expiration.add_argument("--as-of", required=True)
@@ -329,7 +331,10 @@ def main(argv=None):
                 if not args.json:
                     print(render_timeline(result))
                     return 0
-        if args.command == "vantages" and args.html:
+        if args.command in ("expiry","fingerprint-reuse") and args.html:
+            from .certificate_view import render_certificate_review
+            print(render_certificate_review(result,args.command))
+        elif args.command == "vantages" and args.html:
             from .vantage_view import render_vantages
             print(render_vantages(result))
         elif args.command in ("coverage","continuity") and args.html:

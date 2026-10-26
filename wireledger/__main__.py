@@ -149,6 +149,11 @@ def main(argv=None):
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
+    bundle_comparison=sub.add_parser("compare-bundles",help="Authenticate and compare two detached claim sets without importing them or reading histories")
+    bundle_comparison.add_argument("left",type=Path)
+    bundle_comparison.add_argument("right",type=Path)
+    bundle_comparison.add_argument("--public-key",type=Path,required=True)
+    bundle_comparison.add_argument("--html",action="store_true")
     bundle_inspection=sub.add_parser("inspect-bundle",help="Authenticate detached bundle claims without a destination or history; no completeness/ancestry guarantee")
     bundle_inspection.add_argument("input",type=Path)
     bundle_inspection.add_argument("--public-key",type=Path,required=True)
@@ -211,6 +216,11 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command == "compare-bundles":
+            from .retention import compare_bundles
+            from .ledger import parse, _read
+            result=compare_bundles(parse(_read(args.left)),parse(_read(args.right)),load_public(args.public_key))
+            code=2 if result["conflicting_counts"]else 0
         elif args.command == "inspect-bundle":
             from .retention import inspect_bundle
             from .ledger import parse, _read
@@ -358,6 +368,9 @@ def main(argv=None):
         elif args.command in ("coverage","continuity") and args.html:
             from .sampling_view import render_sampling
             print(render_sampling(result))
+        elif args.command == "compare-bundles" and args.html:
+            from .bundle_inspection_view import render_comparison
+            print(render_comparison(result))
         elif args.command == "inspect-bundle" and args.html:
             from .bundle_inspection_view import render_bundle
             print(render_bundle(result))

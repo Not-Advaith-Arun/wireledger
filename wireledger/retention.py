@@ -266,3 +266,18 @@ def check_retained_stores(directories, ledger, key):
     return {"ok": all(report["ok"] for report in reports), "witness": public_id(key),
             "history_count": len(records), "stores": reports,
             "scope": "One authenticated history snapshot checked against all selected locally retained claims. Stores read separately under their own locks; no cross-store snapshot transaction, independent custody, store rollback, freshness or observer-truth proof."}
+
+
+def compare_bundles(left, right, key):
+    """Compare authenticated detached claim sets; never infer prefix ancestry."""
+    a=inspect_bundle(left,key);b=inspect_bundle(right,key)
+    first={(c['count'],c['head']):c for c in a['claims']}
+    second={(c['count'],c['head']):c for c in b['claims']}
+    heads={}
+    for count,head in first.keys()|second.keys():heads.setdefault(count,set()).add(head)
+    return {'format':'wireledger.bundle-comparison.v1','witness':public_id(key),
+            'left_claim_count':len(first),'right_claim_count':len(second),
+            'shared_claim_count':len(first.keys()&second.keys()),
+            'claims':[{'count':count,'head':head,'membership':'both'if(count,head)in first and(count,head)in second else'left_only'if(count,head)in first else'right_only'}for count,head in sorted(first.keys()|second.keys())],
+            'conflicting_counts':sorted(count for count,values in heads.items()if len(values)>1),
+            'scope':'All claims from both detached bundles authenticated with the independently supplied common public key. Membership describes count/head identity only, not ledger ancestry. Bundle containers are unsigned; omissions are not lost history or proof of withholding. No destination/store/history reads, imports, merge, completeness, custody, freshness or observer-truth guarantee.'}

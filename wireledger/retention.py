@@ -295,3 +295,17 @@ def extract_checkpoint(bundle,key,*,count,head=None):
     if len(selected)!=1:
         raise LedgerError('selection must identify exactly one supplied claim; use an explicit --head to disambiguate conflicts')
     return selected[0]
+
+
+def select_bundle(bundle, key, *, counts):
+    """Narrow detached claims by count, preserving all same-count conflicts."""
+    if (not isinstance(counts,list) or not 1<=len(counts)<=MAX_CHECKPOINTS
+            or any(type(count)is not int or count<0 for count in counts)
+            or len(set(counts))!=len(counts)):
+        raise LedgerError('select1..1024 distinct nonnegative signed record counts')
+    prepared=_bundle_claims(bundle,key)
+    available={checkpoint['body']['count']for checkpoint in prepared.values()}
+    if set(counts)-available:
+        raise LedgerError('selected record count has no supplied signed claim; no partial bundle exported')
+    return {'format':'wireledger.checkpoint-bundle.v1','witness':public_id(key),
+            'checkpoints':[checkpoint for checkpoint in prepared.values()if checkpoint['body']['count']in counts]}

@@ -151,6 +151,11 @@ def main(argv=None):
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
+    selection=sub.add_parser("select-bundle",help="Authenticate all detached claims and export explicit signed record counts, keeping same-count conflicts")
+    selection.add_argument("input",type=Path)
+    selection.add_argument("--public-key",type=Path,required=True)
+    selection.add_argument("--count",type=int,action="append",required=True)
+    selection.add_argument("--html",action="store_true",help="Includes original selected signed claims and native bundle download; no store or history reads")
     extraction=sub.add_parser("extract-checkpoint",help="Authenticate every bundle claim and export one explicit original signed checkpoint; no retention/history operation")
     extraction.add_argument("input",type=Path)
     extraction.add_argument("--public-key",type=Path,required=True)
@@ -224,6 +229,15 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command == "select-bundle":
+            from .retention import select_bundle,inspect_bundle
+            from .ledger import parse,_read
+            key=load_public(args.public_key)
+            original=parse(_read(args.input))
+            result=select_bundle(original,key,counts=args.count)
+            selection_report=inspect_bundle(result,key)
+            selection_original_count=len(original['checkpoints'])
+            code=2 if selection_report['conflicting_counts']else 0
         elif args.command == "extract-checkpoint":
             from .retention import extract_checkpoint
             from .ledger import parse, _read
@@ -386,6 +400,9 @@ def main(argv=None):
         elif args.command == "observe-policy" and args.html:
             from .collection_preview_view import render_collection
             print(render_collection(result))
+        elif args.command == "select-bundle" and args.html:
+            from .bundle_inspection_view import render_selection
+            print(render_selection(result,selection_report,selection_original_count))
         elif args.command == "compare-bundles" and args.html:
             from .bundle_inspection_view import render_comparison
             print(render_comparison(result))

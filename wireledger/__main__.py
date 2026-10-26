@@ -149,6 +149,11 @@ def main(argv=None):
     stores.add_argument("left", type=Path)
     stores.add_argument("right", type=Path)
     stores.add_argument("--public-key", type=Path, required=True)
+    extraction=sub.add_parser("extract-checkpoint",help="Authenticate every bundle claim and export one explicit original signed checkpoint; no retention/history operation")
+    extraction.add_argument("input",type=Path)
+    extraction.add_argument("--public-key",type=Path,required=True)
+    extraction.add_argument("--count",type=int,required=True)
+    extraction.add_argument("--head",help="Exact signed head required when count is ambiguous; unequal counts never prove ancestry")
     bundle_comparison=sub.add_parser("compare-bundles",help="Authenticate and compare two detached claim sets without importing them or reading histories")
     bundle_comparison.add_argument("left",type=Path)
     bundle_comparison.add_argument("right",type=Path)
@@ -216,6 +221,10 @@ def main(argv=None):
             records = verify(args.ledger, key, checkpoint_data)
             result = audit(records, load_trust(args.ca_file), at_observed_time=args.at_observed_time)
             code = 0 if result["ok"] else 2
+        elif args.command == "extract-checkpoint":
+            from .retention import extract_checkpoint
+            from .ledger import parse, _read
+            result=extract_checkpoint(parse(_read(args.input)),load_public(args.public_key),count=args.count,head=args.head)
         elif args.command == "compare-bundles":
             from .retention import compare_bundles
             from .ledger import parse, _read

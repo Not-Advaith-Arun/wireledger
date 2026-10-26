@@ -281,3 +281,17 @@ def compare_bundles(left, right, key):
             'claims':[{'count':count,'head':head,'membership':'both'if(count,head)in first and(count,head)in second else'left_only'if(count,head)in first else'right_only'}for count,head in sorted(first.keys()|second.keys())],
             'conflicting_counts':sorted(count for count,values in heads.items()if len(values)>1),
             'scope':'All claims from both detached bundles authenticated with the independently supplied common public key. Membership describes count/head identity only, not ledger ancestry. Bundle containers are unsigned; omissions are not lost history or proof of withholding. No destination/store/history reads, imports, merge, completeness, custody, freshness or observer-truth guarantee.'}
+
+
+def extract_checkpoint(bundle,key,*,count,head=None):
+    """Export one explicit authenticated claim without rewriting its signature."""
+    if type(count)is not int or count<0:
+        raise LedgerError('select a nonnegative signed record count')
+    if head is not None and not isinstance(head,str):
+        raise LedgerError('checkpoint head must be text')
+    # Authenticate the entire supplied bundle, even unselected claims.
+    prepared=_bundle_claims(bundle,key)
+    selected=[checkpoint for checkpoint in prepared.values()if checkpoint['body']['count']==count and(head is None or checkpoint['body']['head']==head)]
+    if len(selected)!=1:
+        raise LedgerError('selection must identify exactly one supplied claim; use an explicit --head to disambiguate conflicts')
+    return selected[0]

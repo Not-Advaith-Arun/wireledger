@@ -20,3 +20,11 @@ def render_selection(bundle,report,original_count):
         'Every original supplied signature was authenticated before selecting explicit record counts. Original selected claims and signatures are included in this page and native bundle download, including every conflicting head at each selected count. No destination, retained store, history or private key was read or changed. The container is unsigned: selection never proves original completeness, ancestry, freshness, independent custody or observer truth. Import or inspect separately with an independently supplied public key.',
         ['Signed record count','Claimed head','Signed claim digest'],rows,payload=bundle,
         summary=f"Selected {report['claim_count']} of {original_count} signed claims; {original_count-report['claim_count']} omitted. Same-count conflicts retained: {len(report['conflicting_counts'])}. Download report JSON is an importable signed-claim bundle; conflicts still require attention.")
+
+
+def render_combined(bundle,report,input_claims):
+    rows=[{'group':'Conflicting count'if c['count']in report['conflicting_counts']else'Authenticated claim','cells':[c['count'],c['head'],c['sha256']]}for c in report['claims']]
+    return render_report('Wireledger combined detached claims',
+        'Both complete input bundles authenticated against the same independently supplied public key. Identical signed bodies coalesced; distinct same-count heads are preserved with original signatures. Output order is first input then new claims from the second, not chronology or ancestry. Bundle containers are unsigned: no completeness, custody, freshness or history consistency is established. No store, history, private-key, import or network operation occurred. This page contains selected original signed claims for a separate explicit native import.',
+        ['Signed record count','Claimed head','Signed claim digest'],rows,payload=bundle,
+        summary=f"Combined {input_claims} supplied claims into {report['claim_count']} distinct signed bodies; {input_claims-report['claim_count']} repeated bodies coalesced. Same-count conflicts retained: {len(report['conflicting_counts'])}. Download report JSON is an importable bundle; conflicts still require attention.")

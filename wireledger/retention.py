@@ -309,3 +309,13 @@ def select_bundle(bundle, key, *, counts):
         raise LedgerError('selected record count has no supplied signed claim; no partial bundle exported')
     return {'format':'wireledger.checkpoint-bundle.v1','witness':public_id(key),
             'checkpoints':[checkpoint for checkpoint in prepared.values()if checkpoint['body']['count']in counts]}
+
+
+def combine_bundles(left,right,key):
+    """Authenticate both complete inputs; retain every distinct signed body."""
+    first=_bundle_claims(left,key);second=_bundle_claims(right,key)
+    combined=dict(first)
+    for name,checkpoint in second.items():combined.setdefault(name,checkpoint)
+    if len(combined)>MAX_CHECKPOINTS:
+        raise LedgerError('combined bundle exceeds1024 claims; no partial bundle exported')
+    return {'format':'wireledger.checkpoint-bundle.v1','witness':public_id(key),'checkpoints':list(combined.values())}

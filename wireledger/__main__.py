@@ -27,6 +27,10 @@ def main(argv=None):
     probe.add_argument("--vantage", default="local")
     probe.add_argument("--timeout", type=float, default=5,
                        help="total DNS/TCP/TLS network budget in seconds (0 < value <= 60)")
+    policy_comparison=sub.add_parser("compare-policies",help="Compare normalized unsigned collection intent without a witness, key or network")
+    policy_comparison.add_argument("left",type=Path)
+    policy_comparison.add_argument("right",type=Path)
+    policy_comparison.add_argument("--html",action="store_true")
     collection = sub.add_parser("observe-policy", help="Collect each explicit endpoint/vantage once, sequentially, retaining signed failures; at most16 rows")
     collection.add_argument("directory", type=Path)
     collection.add_argument("--html",action="store_true",help="Read-only normalized collection cards; requires --preview and never contacts endpoints")
@@ -212,6 +216,10 @@ def main(argv=None):
             record = append(args.directory / "observations.jsonl", key, observation)
             result = {"sequence": record["body"]["sequence"], "observation": observation}
             code = 0 if observation["status"] == "verified" else 2
+        elif args.command == "compare-policies":
+            from .policy_comparison import compare_policies
+            from .ledger import parse,_read
+            result=compare_policies(parse(_read(args.left)),parse(_read(args.right)))
         elif args.command == "observe-policy":
             if args.html and not args.preview:raise ValueError('collection HTML requires --preview; no collection attempted')
             from .collection import observe_policy, preview_policy
@@ -411,6 +419,9 @@ def main(argv=None):
         elif args.command == "audit" and args.html:
             from .audit_view import render_audit
             print(render_audit(result))
+        elif args.command == "compare-policies" and args.html:
+            from .policy_comparison import render_policy_comparison
+            print(render_policy_comparison(result))
         elif args.command == "observe-policy" and args.html:
             from .collection_preview_view import render_collection
             print(render_collection(result))

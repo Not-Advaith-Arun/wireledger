@@ -27,6 +27,10 @@ def main(argv=None):
     probe.add_argument("--vantage", default="local")
     probe.add_argument("--timeout", type=float, default=5,
                        help="total DNS/TCP/TLS network budget in seconds (0 < value <= 60)")
+    policy_union=sub.add_parser("combine-policies",help="Combine explicit unsigned collection intent, coalescing identical normalized endpoint/vantage rows; no network")
+    policy_union.add_argument("left",type=Path)
+    policy_union.add_argument("right",type=Path)
+    policy_union.add_argument("--html",action="store_true")
     policy_comparison=sub.add_parser("compare-policies",help="Compare normalized unsigned collection intent without a witness, key or network")
     policy_comparison.add_argument("left",type=Path)
     policy_comparison.add_argument("right",type=Path)
@@ -216,6 +220,10 @@ def main(argv=None):
             record = append(args.directory / "observations.jsonl", key, observation)
             result = {"sequence": record["body"]["sequence"], "observation": observation}
             code = 0 if observation["status"] == "verified" else 2
+        elif args.command == "combine-policies":
+            from .policy_comparison import combine_policies
+            from .ledger import parse,_read
+            result=combine_policies(parse(_read(args.left)),parse(_read(args.right)))
         elif args.command == "compare-policies":
             from .policy_comparison import compare_policies
             from .ledger import parse,_read
@@ -419,6 +427,9 @@ def main(argv=None):
         elif args.command == "audit" and args.html:
             from .audit_view import render_audit
             print(render_audit(result))
+        elif args.command == "combine-policies" and args.html:
+            from .policy_comparison import render_combined_policy
+            print(render_combined_policy(result))
         elif args.command == "compare-policies" and args.html:
             from .policy_comparison import render_policy_comparison
             print(render_policy_comparison(result))

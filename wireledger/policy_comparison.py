@@ -15,3 +15,17 @@ def render_policy_comparison(report):
     rows=[{'group':row['membership'],'cells':[row['host'],row['port'],row['vantage']]}for row in report['endpoints']]
     return render_report('Wireledger collection policy comparison',report['scope'],['Normalized host','Port','Declared vantage'],rows,payload=report,
         summary=f"Unsigned intent comparison: {report['shared_endpoints']} shared, {report['added_endpoints']} added, {report['removed_endpoints']} removed normalized endpoint/vantage groups. No network contact, signing or coverage assertion.")
+
+
+def combine_policies(left,right):
+    groups=expected_endpoints(left)|expected_endpoints(right)
+    if len(groups)>1000:raise ValueError('combined policy exceeds1000 distinct endpoint/vantage groups')
+    return [{'host':host,'port':port,'vantage':vantage}for host,port,vantage in sorted(groups)]
+
+
+def render_combined_policy(policy):
+    rows=[{'group':'Unsigned intent','cells':[row['host'],row['port'],row['vantage']]}for row in policy]
+    return render_report('Wireledger combined collection policy',
+        'Both complete unsigned policies validated before normalization and union. Identical normalized endpoint/vantage rows coalesced across inputs only; duplicates within either input refuse. Native JSON download is an unsigned policy, not signed observations or evidence of coverage, availability, trust or freshness. No witness, keys, history or network accessed. At most1000 inventory groups; actual collection still requires at most16 endpoints and separate explicit observe-policy preview/collection. Host and vantage labels may be private.',
+        ['Normalized host','Port','Declared vantage'],rows,payload=policy,
+        summary=f"{len(rows)} distinct endpoint/vantage groups. Download the native policy for separate review; no collection or history changes occurred.")

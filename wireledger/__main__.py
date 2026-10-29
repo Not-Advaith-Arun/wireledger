@@ -49,7 +49,7 @@ def main(argv=None):
     collection.add_argument("--connect-ip", help="Optional explicit connection address applied to every selected endpoint")
     collection.add_argument("--ca-file")
     collection.add_argument("--timeout", type=float, default=5, help="Per-endpoint network budget in seconds,0<value<=60; no whole-command deadline")
-    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "certificate-batch", "compare-certificates", "certificate-picker", "failures"):
+    for command in ("verify", "report", "timeline", "certificate-chain", "certificate-info", "certificate-batch", "policy-from-samples", "compare-certificates", "certificate-picker", "failures"):
         check = sub.add_parser(command)
         check.add_argument("ledger", type=Path)
         check.add_argument("--public-key", type=Path, required=True, help="independently trusted witness public key")
@@ -64,6 +64,9 @@ def main(argv=None):
             check.add_argument("--limit",type=int,default=50)
             check.add_argument("--selection",type=Path,help="Carry explicit choices across pages of this exact signed history")
             check.add_argument("--json",action="store_true")
+        if command == "policy-from-samples":
+            check.add_argument("--sequence", type=int, action="append", required=True)
+            check.add_argument("--html", action="store_true")
         if command == "certificate-batch":
             check.add_argument("--sequence",type=int,action="append",required=True)
             check.add_argument("--index",type=int,default=1)
@@ -403,6 +406,15 @@ def main(argv=None):
                     args.left_sequence,args.right_sequence=selected_pair(records,result,parse(_read(args.selection)),complete=True)
                 if args.left_sequence is None or args.right_sequence is None:raise ValueError('choose both explicit manual sequences or a complete captured selection')
                 result=compare_captured_certificates(records,args.left_sequence,args.right_sequence)
+            elif args.command == "policy-from-samples":
+                from .sample_policy import policy_from_samples
+                from .policy_picker import render_policy_choices
+                selected = policy_from_samples(records, args.sequence)
+                if args.html:
+                    selected.update(authenticated_history={'witness': result['witness'], 'head': result['head'], 'count': result['count']})
+                    print(render_policy_choices(selected))
+                else: print(json.dumps(selected['policy'], indent=2))
+                return 0
             elif args.command == "certificate-batch":
                 from .certificate_batch import certificate_batch
                 result=certificate_batch(records,args.sequence,index=args.index)
